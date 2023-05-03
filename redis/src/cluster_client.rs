@@ -17,6 +17,7 @@ struct BuilderParams {
     read_from_replicas: bool,
     tls: Option<TlsMode>,
     retries: Option<u32>,
+    additional_data: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
 }
 
 /// Redis cluster specific parameters.
@@ -30,6 +31,7 @@ pub(crate) struct ClusterParams {
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
     pub(crate) retries: u32,
+    pub(crate) additional_data: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
 }
 
 impl From<BuilderParams> for ClusterParams {
@@ -40,6 +42,7 @@ impl From<BuilderParams> for ClusterParams {
             read_from_replicas: value.read_from_replicas,
             tls: value.tls,
             retries: value.retries.unwrap_or(DEFAULT_RETRIES),
+            additional_data: value.additional_data,
         }
     }
 }
@@ -176,6 +179,104 @@ impl ClusterClientBuilder {
     /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
     pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
         self.builder_params.read_from_replicas = true;
+        self
+    }
+
+    /// Allows passing type-erased data to the newly created clients.
+    ///
+    /// This allows the user to pass arbitrary data to their implementation of the client.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use futures::FutureExt;
+    /// use redis::{
+    ///     aio::{ConnectionLike, MultiplexedConnection},
+    ///     cluster_async::Connect,
+    /// };
+
+    /// pub(crate) struct ConnectionConfiguration {
+    ///     pub(crate) send_retries: u8,
+    /// }
+
+    /// #[derive(Clone)]
+    /// pub struct Connection {
+    ///     connection: MultiplexedConnection,
+    ///     send_retries: u8,
+    /// }
+
+    /// impl ConnectionLike for Connection {
+    ///     fn req_packed_command<'a>(
+    ///         &'a mut self,
+    ///         cmd: &'a redis::Cmd,
+    ///     ) -> redis::RedisFuture<'a, redis::Value> {
+    ///         (async move {
+    ///             let mut retries = self.send_retries;
+    ///             let mut result = self.connection.send_packed_command(cmd).await;
+    ///             while result.is_err() && retries > 0 {
+    ///                 retries -= 1;
+    ///                 result = self.connection.send_packed_command(cmd).await;
+    ///             }
+    ///             result
+    ///         })
+    ///         .boxed()
+    ///     }
+
+    ///     fn req_packed_commands<'a>(
+    ///         &'a mut self,
+    ///         cmd: &'a redis::Pipeline,
+    ///         offset: usize,
+    ///         count: usize,
+    ///     ) -> redis::RedisFuture<'a, Vec<redis::Value>> {
+    ///         self.connection.req_packed_commands(cmd, offset, count)
+    ///     }
+
+    ///     fn get_db(&self) -> i64 {
+    ///         self.connection.get_db()
+    ///     }
+    /// }
+
+    /// impl Connect for Connection {
+    ///     fn connect<'a, T>(_info: T) -> redis::RedisFuture<'a, Self>
+    ///     where
+    ///         T: redis::IntoConnectionInfo + Send + 'a,
+    ///     {
+    ///         panic!("Unused, should use `connect_extended`")
+    ///     }
+
+    ///     fn connect_extended<'a, T>(
+    ///         info: T,
+    ///         additional_data: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+    ///     ) -> redis::RedisFuture<'a, Self>
+    ///     where
+    ///         T: redis::IntoConnectionInfo + Send + 'a,
+    ///     {
+    ///         futures::FutureExt::boxed(async move {
+    ///             let connection_info = info.into_connection_info()?;
+    ///             let send_retries = additional_data
+    ///                 .map(|val| {
+    ///                     val.downcast::<ConnectionConfiguration>()
+    ///                         .unwrap()
+    ///                         .send_retries
+    ///                 })
+    ///                 .unwrap_or_default();
+    ///             let connection = redis::Client::open(connection_info)?
+    ///                 .get_multiplexed_async_connection()
+    ///                 .await?;
+
+    ///             Ok(Connection {
+    ///                 connection,
+    ///                 send_retries,
+    ///             })
+    ///         })
+    ///     }
+    /// }
+    /// ```    
+    pub fn additional_data(
+        mut self,
+        additional_data: std::sync::Arc<dyn std::any::Any + Send + Sync>,
+    ) -> ClusterClientBuilder {
+        self.builder_params.additional_data = Some(additional_data);
         self
     }
 
