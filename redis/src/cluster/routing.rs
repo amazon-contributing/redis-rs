@@ -1,4 +1,4 @@
-use crate::cluster_topology::get_slot;
+use super::topology::get_slot;
 use crate::cmd::{Arg, Cmd};
 use crate::types::Value;
 use crate::{ErrorKind, RedisResult};
@@ -619,7 +619,7 @@ impl Route {
 #[cfg(test)]
 mod tests {
     use super::{MultipleNodeRoutingInfo, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr};
-    use crate::{cluster_topology::slot, cmd, parser::parse_redis_value};
+    use crate::{cluster::topology::slot, cmd, parser::parse_redis_value};
 
     #[test]
     fn test_routing_info_mixed_capatalization() {

@@ -1,11 +1,8 @@
 //! This module provides the functionality to refresh and calculate the cluster topology for Redis Cluster.
 
 use crate::cluster::get_connection_addr;
-use crate::cluster_routing::MultipleNodeRoutingInfo;
-use crate::cluster_routing::Route;
-use crate::cluster_routing::SlotAddr;
-use crate::cluster_routing::SlotAddrs;
-use crate::{cluster::TlsMode, cluster_routing::Slot, ErrorKind, RedisError, RedisResult, Value};
+use crate::cluster_routing::{MultipleNodeRoutingInfo, Route, Slot, SlotAddr, SlotAddrs};
+use crate::{cluster::TlsMode, ErrorKind, RedisError, RedisResult, Value};
 use derivative::Derivative;
 use log::trace;
 use std::collections::hash_map::DefaultHasher;
@@ -347,7 +344,7 @@ pub(crate) fn calculate_topology(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cluster_routing::SlotAddrs;
+    use crate::cluster::routing::SlotAddrs;
 
     #[test]
     fn test_get_hashtag() {

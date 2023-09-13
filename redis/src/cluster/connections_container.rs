@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use rand::seq::IteratorRandom;
 
+use crate::cluster::topology::SlotMap;
 use crate::cluster_routing::{MultipleNodeRoutingInfo, Route, SlotAddr};
-use crate::cluster_topology::SlotMap;
 
 type IdentifierType = String;
 

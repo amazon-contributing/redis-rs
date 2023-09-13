@@ -438,19 +438,18 @@ pub mod geo;
 #[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
 pub mod cluster;
 
-#[cfg(feature = "cluster")]
-mod cluster_client;
-
-#[cfg(feature = "cluster")]
-mod cluster_pipeline;
-
 /// Routing information for cluster commands.
 #[cfg(feature = "cluster")]
-pub mod cluster_routing;
+pub mod cluster_routing {
+    pub use super::cluster::routing::*;
+}
 
+/// Topology information for cluster commands.
 #[cfg(feature = "cluster")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
-pub mod cluster_topology;
+pub mod cluster_topology {
+    pub use super::cluster::topology::*;
+}
 
 #[cfg(feature = "r2d2")]
 #[cfg_attr(docsrs, doc(cfg(feature = "r2d2")))]
@@ -460,8 +459,11 @@ mod r2d2;
 #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
 pub mod streams;
 
+/// Async cluster connection.
 #[cfg(feature = "cluster-async")]
-pub mod cluster_async;
+pub mod cluster_async {
+    pub use super::cluster::cluster_async::*;
+}
 
 #[cfg(feature = "sentinel")]
 pub mod sentinel;

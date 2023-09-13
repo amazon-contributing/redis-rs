@@ -1,6 +1,7 @@
 Copyright (c) 2022 by redis-rs contributors
 
 Redis cluster code in parts copyright (c) 2018 by Atsushi Koge.
+Redis async cluster code in parts copyright 2019 Atsushi Koge, Markus Westerlind
 
 Some rights reserved.
 

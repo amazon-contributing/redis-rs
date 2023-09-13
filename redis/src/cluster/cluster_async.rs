@@ -22,7 +22,6 @@
 //! }
 //! ```
 
-mod connections_container;
 use std::{
     collections::HashMap,
     fmt, io,
@@ -38,17 +37,18 @@ use std::{
     task::{self, Poll},
 };
 
+use crate::cluster::connections_container;
 use crate::{
     aio::{get_socket_addrs, ConnectionLike, MultiplexedConnection},
+    cluster::client::{ClusterParams, RetryParams},
+    cluster::topology::{
+        calculate_topology, DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL,
+        DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT,
+    },
     cluster::{get_connection_info, slot_cmd},
-    cluster_client::{ClusterParams, RetryParams},
     cluster_routing::{
         MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
         SingleNodeRoutingInfo,
-    },
-    cluster_topology::{
-        calculate_topology, DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL,
-        DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT,
     },
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,

@@ -1,4 +1,4 @@
-//! This module extends the library to support Redis Cluster.
+//! This module extends the library to support sync and async Redis Cluster.
 //!
 //! Note that this module does not currently provide pubsub
 //! functionality.
@@ -35,6 +35,9 @@
 //!     .expire(key, 60).ignore()
 //!     .query(&mut connection).unwrap();
 //! ```
+
+use super::client as cluster_client;
+use super::pipeline as cluster_pipeline;
 use std::cell::RefCell;
 use std::iter::Iterator;
 use std::str::FromStr;
@@ -43,9 +46,12 @@ use std::time::Duration;
 
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 
-use crate::cluster_pipeline::UNROUTABLE_ERROR;
-use crate::cluster_routing::{MultipleNodeRoutingInfo, SingleNodeRoutingInfo, SlotAddr};
-use crate::cluster_topology::{parse_slots, SlotMap, SLOT_SIZE};
+use super::pipeline::UNROUTABLE_ERROR;
+use super::routing::{
+    MultipleNodeRoutingInfo, Redirect, Routable, Route, RoutingInfo, SingleNodeRoutingInfo,
+    SlotAddr,
+};
+use super::topology::{parse_slots, SlotMap, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
@@ -54,13 +60,9 @@ use crate::parser::parse_redis_value;
 use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
 use crate::IntoConnectionInfo;
 pub use crate::TlsMode; // Pub for backwards compatibility
-use crate::{
-    cluster_client::ClusterParams,
-    cluster_routing::{Redirect, Routable, Route, RoutingInfo},
-};
-
-pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
-pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
+use cluster_client::ClusterParams;
+pub use cluster_client::{ClusterClient, ClusterClientBuilder};
+pub use cluster_pipeline::{cluster_pipe, ClusterPipeline};
 
 /// Implements the process of connecting to a Redis server
 /// and obtaining and configuring a connection handle.

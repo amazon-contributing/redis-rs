@@ -19,7 +19,7 @@ pub use json::JsonCommands;
 pub use json::JsonAsyncCommands;
 
 #[cfg(feature = "cluster")]
-use crate::cluster_pipeline::ClusterPipeline;
+use crate::cluster::pipeline::ClusterPipeline;
 
 #[cfg(feature = "geospatial")]
 use crate::geo;
