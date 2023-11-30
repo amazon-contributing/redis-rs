@@ -553,6 +553,7 @@ where
                             host,
                             port,
                             insecure: _,
+                            tls_params: _,
                         } => (host, port),
                         crate::ConnectionAddr::Unix(_) => {
                             // We don't support multiple addresses for a Unix address. Store the initial node address and continue
@@ -585,7 +586,7 @@ where
             Self::try_to_expand_initial_nodes(initial_nodes).await;
         let connections = stream::iter(initial_nodes.iter().cloned())
             .map(|(node_addr, socket_addr)| {
-                let params = params.clone();
+                let params: ClusterParams = params.clone();
                 async move {
                     let result = connect_and_check(&node_addr, params, socket_addr).await;
                     let node_identifier = if let Some(socket_addr) = socket_addr {
