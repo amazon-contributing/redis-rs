@@ -56,6 +56,9 @@ use crate::{
 };
 use std::time::Duration;
 
+#[cfg(not(feature = "tls-rustls"))]
+use crate::connection::TlsConnParams;
+
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use crate::aio::{async_std::AsyncStd, RedisRuntime};
 use arcstr::ArcStr;
