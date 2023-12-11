@@ -2,6 +2,7 @@
 mod support;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::println;
 use std::sync::{
     atomic::{self, AtomicI32, AtomicU16},
     atomic::{AtomicBool, Ordering},
@@ -1005,6 +1006,68 @@ fn test_async_cluster_ask_error_when_new_node_is_added() {
     );
 
     assert_eq!(value, Ok(Some(123)));
+}
+
+#[test]
+fn test_async_cluster_replica_read_asaf() {
+    let name = "node";
+
+    const ITERATIONS: u32 = 3;
+    static mut LOADING_ERRORS_COUNT: u32 = 0;
+
+    // requests should route to replica
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(5)
+            .read_from_replicas(),
+        name,
+        move |cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(
+                name,
+                cmd,
+                Some(vec![
+                    MockSlotRange {
+                        primary_port: 6379,
+                        replica_ports: vec![6382, 6383],
+                        slot_range: (0..8191),
+                    },
+                    MockSlotRange {
+                        primary_port: 6380,
+                        replica_ports: vec![6384, 6385],
+                        slot_range: (8192..16383),
+                    },
+                ]),
+            )?;
+            match port {
+                6382 | 6383 => {
+                    unsafe {
+                        println!("error loading");
+                        LOADING_ERRORS_COUNT = LOADING_ERRORS_COUNT + 1;
+                    }
+                    Err(parse_redis_value(b"-LOADING\r\n"))
+                }
+                6379 => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                _ => panic!("Wrong node"),
+            }
+        },
+    );
+    for _n in 0..ITERATIONS {
+        let value = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<_, Option<i32>>(&mut connection),
+        );
+        assert_eq!(value, Ok(Some(123)));
+    }
+
+    unsafe {
+        assert_eq!(LOADING_ERRORS_COUNT, ITERATIONS);
+    }
 }
 
 #[test]
