@@ -458,8 +458,7 @@ where
                     }
                     ErrorKind::BusyLoadingError => {
                         let mut request = this.request.take().unwrap();
-                        request.info.redirect = Some(Redirect::Primary);
-                        Next::Retry { request }.into()
+                        Next::RefreshSlots { request }.into()
                     }
                     _ => {
                         if err.is_retryable() {
@@ -1023,7 +1022,7 @@ where
         core: Core<C>,
         asking: bool,
     ) -> (OperationTarget, RedisResult<Response>) {
-        let route_option = if redirect.is_some() && !matches!(&redirect, Some(Redirect::Primary)) {
+        let route_option = if redirect.is_some() {
             // if we have a redirect, we don't take info from `routing`.
             // TODO - combine the info in `routing` and `redirect` and `asking` into a single structure, so there won't be this question of which field takes precedence.
             SingleNodeRoutingInfo::Random
@@ -1127,15 +1126,6 @@ where
                     ConnectionCheck::Found,
                 )
             }
-            Some(Redirect::Primary) => match route {
-                SingleNodeRoutingInfo::Random => ConnectionCheck::Nothing,
-                SingleNodeRoutingInfo::SpecificNode(route) => {
-                    let route1 = Route::new(route.slot(), SlotAddr::Master);
-                    read_guard
-                        .connection_for_route(&route1)
-                        .map_or(ConnectionCheck::Nothing, ConnectionCheck::Found)
-                }
-            },
             None => match route {
                 SingleNodeRoutingInfo::SpecificNode(route) => read_guard
                     .connection_for_route(&route)

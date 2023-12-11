@@ -10,7 +10,6 @@ use std::iter::{Iterator, Once};
 pub(crate) enum Redirect {
     Moved(String),
     Ask(String),
-    Primary,
 }
 
 /// Logical bitwise aggregating operators.
