@@ -635,6 +635,7 @@ where
                     let (addr, is_asking) = match redirected {
                         Redirect::Moved(addr) => (addr, false),
                         Redirect::Ask(addr) => (addr, true),
+                        Redirect::Primary => panic!("Redirect cannot be primary"),
                     };
                     let conn = self.get_connection_by_addr(&mut connections, &addr)?;
                     if is_asking {

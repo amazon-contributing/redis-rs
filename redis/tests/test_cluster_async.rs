@@ -1027,48 +1027,31 @@ fn test_async_cluster_replica_read_asaf() {
             .read_from_replicas(),
         name,
         move |cmd: &[u8], port| {
-            let slots_config = Some(vec![
-                MockSlotRange {
-                    primary_port: 6379,
-                    replica_ports: vec![6382, 6383],
-                    slot_range: (0..8191),
-                },
-                MockSlotRange {
-                    primary_port: 6380,
-                    replica_ports: vec![6384, 6385],
-                    slot_range: (8192..16383),
-                },
-            ]);
-
-            let slots_config_minus_replica = Some(vec![
-                MockSlotRange {
-                    primary_port: 6379,
-                    replica_ports: vec![6383],
-                    slot_range: (0..8191),
-                },
-                MockSlotRange {
-                    primary_port: 6380,
-                    replica_ports: vec![6384, 6385],
-                    slot_range: (8192..16383),
-                },
-            ]);
             respond_startup_with_replica_using_config(
                 name,
                 cmd,
-                if unsafe { LOADING_ERRORS_COUNT } == 0 {
-                    slots_config
-                } else {
-                    slots_config_minus_replica
-                },
+                Some(vec![
+                    MockSlotRange {
+                        primary_port: 6379,
+                        replica_ports: vec![6382, 6383],
+                        slot_range: (0..8191),
+                    },
+                    MockSlotRange {
+                        primary_port: 6380,
+                        replica_ports: vec![6384, 6385],
+                        slot_range: (8192..16383),
+                    },
+                ]),
             )?;
             match port {
-                6382 => {
+                6382 | 6383 => {
                     unsafe {
+                        println!("error loading");
                         LOADING_ERRORS_COUNT = LOADING_ERRORS_COUNT + 1;
                     }
                     Err(parse_redis_value(b"-LOADING\r\n"))
                 }
-                6379 | 6383 => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                6379 => Err(Ok(Value::BulkString(b"123".to_vec()))),
                 _ => panic!("Wrong node"),
             }
         },
@@ -1083,7 +1066,7 @@ fn test_async_cluster_replica_read_asaf() {
     }
 
     unsafe {
-        assert_eq!(LOADING_ERRORS_COUNT, 1);
+        assert_eq!(LOADING_ERRORS_COUNT, ITERATIONS);
     }
 }
 
