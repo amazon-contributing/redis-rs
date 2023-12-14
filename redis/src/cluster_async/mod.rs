@@ -128,6 +128,7 @@ where
     /// Send a command to the given `routing`. If `routing` is [None], it will be computed from `cmd`.
     pub async fn route_command(&mut self, cmd: &Cmd, routing: RoutingInfo) -> RedisResult<Value> {
         trace!("route_command");
+        println!("TRACE: file: {}, line: {} route_command ", file!(), line!());
         let (sender, receiver) = oneshot::channel();
         self.0
             .send(Message {
@@ -364,6 +365,10 @@ enum Next<I, C> {
     Retry {
         request: PendingRequest<I, C>,
     },
+    RetryBusyLoadingError {
+        request: PendingRequest<I, C>,
+        identifier: ConnectionIdentifier,
+    },
     Reconnect {
         request: PendingRequest<I, C>,
         target: ConnectionIdentifier,
@@ -457,9 +462,42 @@ where
                         .into()
                     }
                     ErrorKind::BusyLoadingError => {
-                        let mut request = this.request.take().unwrap();
-                        request.info.redirect = Some(Redirect::Primary);
-                        Next::Retry { request }.into()
+                        let request = this.request.take().unwrap();
+                        /*    let route =  match this.request.info.cmd {
+                            CmdArg::Cmd { cmd, routing } => {
+                                match{routing} {
+
+
+                                }
+                                .slot_addr()
+                            CmdArg::Pipeline {
+                                pipeline,
+                                offset,
+                                count,
+                                route,
+                            } => {
+                                Self::try_pipeline_request(
+                                    pipeline,
+                                    offset,
+                                    count,
+                                    Self::get_connection(info.redirect, route, core, asking),
+                                )
+                                .await
+                            }
+                        }
+                        match route.slot_addr() {
+                            SlotAddr::Master => Next::Retry { request }.into(),
+                            _ => Next::RetryBusyLoadingError {
+                                request,
+                                identifier,
+                            }
+                            .into(),
+                        }*/
+                        Next::RetryBusyLoadingError {
+                            request,
+                            identifier,
+                        }
+                        .into()
                     }
                     _ => {
                         if err.is_retryable() {
@@ -1023,7 +1061,17 @@ where
         core: Core<C>,
         asking: bool,
     ) -> (OperationTarget, RedisResult<Response>) {
+        println!(
+            "TRACE: file: {}, line: {} try_cmd_request ",
+            file!(),
+            line!()
+        );
         let route_option = if redirect.is_some() && !matches!(&redirect, Some(Redirect::Primary)) {
+            println!(
+                "TRACE: file: {}, line: {} try_cmd_request ",
+                file!(),
+                line!()
+            );
             // if we have a redirect, we don't take info from `routing`.
             // TODO - combine the info in `routing` and `redirect` and `asking` into a single structure, so there won't be this question of which field takes precedence.
             SingleNodeRoutingInfo::Random
@@ -1055,11 +1103,20 @@ where
             }
         };
         trace!("route request to single node");
-
+        println!(
+            "TRACE: file: {}, line: {} try_cmd_request ",
+            file!(),
+            line!()
+        );
         // if we reached this point, we're sending the command only to single node, and we need to find the
         // right connection to the node.
         let (identifier, mut conn) =
             Self::get_connection(redirect, route_option, core, asking).await;
+        println!(
+            "TRACE: file: {}, line: {} try_cmd_request ",
+            file!(),
+            line!()
+        );
         let result = conn.req_packed_command(&cmd).await.map(Response::Single);
         (identifier.into(), result)
     }
@@ -1104,6 +1161,39 @@ where
                 .await
             }
         }
+    }
+
+    async fn remove_connection_and_try_request(
+        core: Core<C>,
+        info: RequestInfo<C>,
+        identifier: ConnectionIdentifier,
+    ) -> (OperationTarget, RedisResult<Response>) {
+        println!(
+            "TRACE: file: {}, line: {} remove_connection_and_try_request ",
+            file!(),
+            line!()
+        );
+        {
+            let mut connections_container: tokio::sync::RwLockWriteGuard<
+                '_,
+                connections_container::ConnectionsContainer<
+                    future::Shared<Pin<Box<dyn Future<Output = C> + Send>>>,
+                >,
+            > = core.conn_lock.write().await;
+            println!(
+                "TRACE: file: {}, line: {} remove_connection_and_try_request ",
+                file!(),
+                line!()
+            );
+            connections_container.remove_connection(&identifier);
+        }
+
+        println!(
+            "TRACE: file: {}, line: {} remove_connection_and_try_request ",
+            file!(),
+            line!()
+        );
+        Self::try_request(info, core.clone()).await
     }
 
     async fn get_connection(
@@ -1266,6 +1356,38 @@ where
                             future: Box::pin(future),
                         },
                     }));
+                }
+                Next::RetryBusyLoadingError {
+                    request,
+                    identifier,
+                } => {
+                    println!(
+                        "TRACE: file: {}, line: {} remove_connection_and_try_request ",
+                        file!(),
+                        line!()
+                    );
+                    let future = Self::remove_connection_and_try_request(
+                        self.inner.clone(),
+                        request.info.clone(),
+                        identifier,
+                    );
+                    println!(
+                        "TRACE: file: {}, line: {} remove_connection_and_try_request ",
+                        file!(),
+                        line!()
+                    );
+                    self.in_flight_requests.push(Box::pin(Request {
+                        retry_params: self.inner.cluster_params.retry_params.clone(),
+                        request: Some(request),
+                        future: RequestState::Future {
+                            future: Box::pin(future),
+                        },
+                    }));
+                    println!(
+                        "TRACE: file: {}, line: {} remove_connection_and_try_request ",
+                        file!(),
+                        line!()
+                    );
                 }
                 Next::RefreshSlots { request } => {
                     poll_flush_action =
