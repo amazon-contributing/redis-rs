@@ -101,7 +101,8 @@ pub fn command_for_multi_slot_indices<'a>(
     new_cmd
 }
 
-pub(crate) fn aggregate(values: Vec<Value>, op: AggregateOp) -> RedisResult<Value> {
+/// Aggreagte numeric responses.
+pub fn aggregate(values: Vec<Value>, op: AggregateOp) -> RedisResult<Value> {
     let initial_value = match op {
         AggregateOp::Min => i64::MAX,
         AggregateOp::Sum => 0,
@@ -128,7 +129,8 @@ pub(crate) fn aggregate(values: Vec<Value>, op: AggregateOp) -> RedisResult<Valu
     Ok(Value::Int(result))
 }
 
-pub(crate) fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> RedisResult<Value> {
+/// Aggreagte numeric responses by a boolean operator.
+pub fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> RedisResult<Value> {
     let initial_value = match op {
         LogicalAggregateOp::And => true,
     };
@@ -175,7 +177,8 @@ pub(crate) fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> R
     ))
 }
 
-pub(crate) fn combine_array_results(values: Vec<Value>) -> RedisResult<Value> {
+/// Aggreagte arrau responses into a single array.
+pub fn combine_array_results(values: Vec<Value>) -> RedisResult<Value> {
     let mut results = Vec::new();
 
     for value in values {
@@ -325,12 +328,44 @@ impl ResponsePolicy {
 }
 
 impl RoutingInfo {
+    /// Returns true if the `cmd`` should be routed to all nodes.
+    pub fn is_all_nodes(cmd: &[u8]) -> bool {
+        matches!(
+            cmd,
+            b"ACL SETUSER"
+                | b"ACL DELUSER"
+                | b"ACL SAVE"
+                | b"CLIENT SETNAME"
+                | b"CLIENT SETINFO"
+                | b"SLOWLOG GET"
+                | b"SLOWLOG LEN"
+                | b"SLOWLOG RESET"
+                | b"CONFIG SET"
+                | b"CONFIG RESETSTAT"
+                | b"CONFIG REWRITE"
+                | b"SCRIPT FLUSH"
+                | b"SCRIPT LOAD"
+                | b"LATENCY RESET"
+                | b"LATENCY GRAPH"
+                | b"LATENCY HISTOGRAM"
+                | b"LATENCY HISTORY"
+                | b"LATENCY DOCTOR"
+                | b"LATENCY LATEST"
+        )
+    }
+
     /// Returns the routing info for `r`.
     pub fn for_routable<R>(r: &R) -> Option<RoutingInfo>
     where
         R: Routable + ?Sized,
     {
         let cmd = &r.command()?[..];
+        if Self::is_all_nodes(cmd) {
+            return Some(RoutingInfo::MultiNode((
+                MultipleNodeRoutingInfo::AllNodes,
+                ResponsePolicy::for_command(cmd),
+            )));
+        }
         match cmd {
             b"RANDOMKEY"
             | b"KEYS"
@@ -355,17 +390,6 @@ impl RoutingInfo {
                 MultipleNodeRoutingInfo::AllMasters,
                 ResponsePolicy::for_command(cmd),
             ))),
-
-            b"ACL SETUSER" | b"ACL DELUSER" | b"ACL SAVE" | b"CLIENT SETNAME"
-            | b"CLIENT SETINFO" | b"SLOWLOG GET" | b"SLOWLOG LEN" | b"SLOWLOG RESET"
-            | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE" | b"SCRIPT FLUSH"
-            | b"SCRIPT LOAD" | b"LATENCY RESET" | b"LATENCY GRAPH" | b"LATENCY HISTOGRAM"
-            | b"LATENCY HISTORY" | b"LATENCY DOCTOR" | b"LATENCY LATEST" => {
-                Some(RoutingInfo::MultiNode((
-                    MultipleNodeRoutingInfo::AllNodes,
-                    ResponsePolicy::for_command(cmd),
-                )))
-            }
 
             b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" => multi_shard(r, cmd, 1, false),
             b"MSET" => multi_shard(r, cmd, 1, true),
@@ -418,7 +442,8 @@ pub fn is_readonly(routable: &impl Routable) -> bool {
     }
 }
 
-fn is_readonly_cmd(cmd: &[u8]) -> bool {
+/// Returns `true` if the given `cmd` is a readonly command.
+pub fn is_readonly_cmd(cmd: &[u8]) -> bool {
     matches!(
         cmd,
         b"BITCOUNT"
@@ -529,12 +554,14 @@ pub trait Routable {
             }
         };
 
-        let secondary_command = self.arg_idx(1).map(|x| x.to_ascii_uppercase());
-        Some(match secondary_command {
-            Some(cmd) => {
-                primary_command.reserve(cmd.len() + 1);
+        Some(match self.arg_idx(1) {
+            Some(secondary_command) => {
+                let previous_len = primary_command.len();
+                primary_command.reserve(secondary_command.len() + 1);
                 primary_command.extend(b" ");
-                primary_command.extend(cmd);
+                primary_command.extend(secondary_command);
+                let current_len = primary_command.len();
+                primary_command[previous_len + 1..current_len].make_ascii_uppercase();
                 primary_command
             }
             None => primary_command,
@@ -663,11 +690,13 @@ impl Route {
         Self(slot, slot_addr)
     }
 
-    pub(crate) fn slot(&self) -> u16 {
+    /// Returns the slot number of the route.
+    pub fn slot(&self) -> u16 {
         self.0
     }
 
-    pub(crate) fn slot_addr(&self) -> SlotAddr {
+    /// Returns the slot address of the route.
+    pub fn slot_addr(&self) -> SlotAddr {
         self.1
     }
 }

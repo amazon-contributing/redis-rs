@@ -137,6 +137,38 @@ fn test_cluster_multi_shard_commands() {
 }
 
 #[test]
+fn test_cluster_resp3() {
+    if !use_resp3() {
+        return;
+    }
+    let cluster = TestClusterContext::new(3, 0);
+
+    let mut connection = cluster.connection();
+
+    let hello: std::collections::HashMap<String, Value> =
+        redis::cmd("HELLO").query(&mut connection).unwrap();
+    assert_eq!(hello.get("proto").unwrap(), &Value::Int(3));
+
+    let _: () = connection.hset("hash", "foo", "baz").unwrap();
+    let _: () = connection.hset("hash", "bar", "foobar").unwrap();
+    let result: Value = connection.hgetall("hash").unwrap();
+
+    assert_eq!(
+        result,
+        Value::Map(vec![
+            (
+                Value::BulkString("foo".as_bytes().to_vec()),
+                Value::BulkString("baz".as_bytes().to_vec())
+            ),
+            (
+                Value::BulkString("bar".as_bytes().to_vec()),
+                Value::BulkString("foobar".as_bytes().to_vec())
+            )
+        ])
+    );
+}
+
+#[test]
 #[cfg(feature = "script")]
 fn test_cluster_script() {
     let cluster = TestClusterContext::new(3, 0);
@@ -853,6 +885,33 @@ fn test_cluster_route_correctly_on_packed_transaction_with_single_node_requests2
 
     let result = connection.req_packed_command(&packed_pipeline).unwrap();
     assert_eq!(result, expected_result);
+}
+
+#[test]
+fn test_cluster_with_client_name() {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| builder.client_name(RedisCluster::client_name().to_string()),
+        false,
+    );
+    let mut con = cluster.connection();
+    let client_info: String = redis::cmd("CLIENT").arg("INFO").query(&mut con).unwrap();
+
+    let client_attrs = parse_client_info(&client_info);
+
+    assert!(
+        client_attrs.contains_key("name"),
+        "Could not detect the 'name' attribute in CLIENT INFO output"
+    );
+
+    assert_eq!(
+        client_attrs["name"],
+        RedisCluster::client_name(),
+        "Incorrect client name, expecting: {}, got {}",
+        RedisCluster::client_name(),
+        client_attrs["name"]
+    );
 }
 
 #[cfg(feature = "tls-rustls")]

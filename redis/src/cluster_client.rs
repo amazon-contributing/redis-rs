@@ -33,6 +33,8 @@ struct BuilderParams {
     retries_configuration: RetryParams,
     connection_timeout: Option<Duration>,
     topology_checks_interval: Option<Duration>,
+    client_name: Option<String>,
+    use_resp3: bool,
 }
 
 #[derive(Clone)]
@@ -86,6 +88,8 @@ pub(crate) struct ClusterParams {
     pub(crate) connection_timeout: Duration,
     pub(crate) topology_checks_interval: Option<Duration>,
     pub(crate) tls_params: Option<TlsConnParams>,
+    pub(crate) client_name: Option<String>,
+    pub(crate) use_resp3: bool,
 }
 
 impl ClusterParams {
@@ -109,6 +113,8 @@ impl ClusterParams {
             connection_timeout: value.connection_timeout.unwrap_or(Duration::MAX),
             topology_checks_interval: value.topology_checks_interval,
             tls_params,
+            client_name: value.client_name,
+            use_resp3: value.use_resp3,
         })
     }
 }
@@ -209,6 +215,15 @@ impl ClusterClientBuilder {
                 )));
             }
 
+            if node.redis.client_name.is_some()
+                && node.redis.client_name != cluster_params.client_name
+            {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot use different client_name among initial nodes.",
+                )));
+            }
+
             nodes.push(node);
         }
 
@@ -216,6 +231,12 @@ impl ClusterClientBuilder {
             initial_nodes: nodes,
             cluster_params,
         })
+    }
+
+    /// Sets client name for the new ClusterClient.
+    pub fn client_name(mut self, client_name: String) -> ClusterClientBuilder {
+        self.builder_params.client_name = Some(client_name);
+        self
     }
 
     /// Sets password for the new ClusterClient.
@@ -312,6 +333,14 @@ impl ClusterClientBuilder {
     /// topology, ensuring that the check remains quick and efficient.
     pub fn periodic_topology_checks(mut self, interval: Duration) -> ClusterClientBuilder {
         self.builder_params.topology_checks_interval = Some(interval);
+        self
+    }
+
+    /// Sets whether the new ClusterClient should connect to the servers using RESP3.
+    ///
+    /// If not set, the default is to use RESP3.
+    pub fn use_resp3(mut self, use_resp3: bool) -> ClusterClientBuilder {
+        self.builder_params.use_resp3 = use_resp3;
         self
     }
 

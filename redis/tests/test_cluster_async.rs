@@ -204,6 +204,42 @@ fn test_async_cluster_route_info_to_nodes() {
     .unwrap();
 }
 
+#[test]
+fn test_cluster_resp3() {
+    if !use_resp3() {
+        return;
+    }
+    block_on_all(async move {
+        let cluster = TestClusterContext::new(3, 0);
+
+        let mut connection = cluster.async_connection().await;
+
+        let hello: HashMap<String, Value> = redis::cmd("HELLO")
+            .query_async(&mut connection)
+            .await
+            .unwrap();
+        assert_eq!(hello.get("proto").unwrap(), &Value::Int(3));
+
+        let _: () = connection.hset("hash", "foo", "baz").await.unwrap();
+        let _: () = connection.hset("hash", "bar", "foobar").await.unwrap();
+        let result: Value = connection.hgetall("hash").await.unwrap();
+
+        assert_eq!(
+            result,
+            Value::Map(vec![
+                (
+                    Value::BulkString("foo".as_bytes().to_vec()),
+                    Value::BulkString("baz".as_bytes().to_vec())
+                ),
+                (
+                    Value::BulkString("bar".as_bytes().to_vec()),
+                    Value::BulkString("foobar".as_bytes().to_vec())
+                )
+            ])
+        );
+    });
+}
+
 #[ignore] // TODO Handle pipe where the keys do not all go to the same node
 #[test]
 fn test_async_cluster_basic_pipe() {
@@ -1982,21 +2018,24 @@ fn test_async_cluster_round_robin_read_from_replica() {
 fn get_queried_node_id_if_master(cluster_nodes_output: Value) -> Option<String> {
     // Returns the node ID of the connection that was queried for CLUSTER NODES (using the 'myself' flag), if it's a master.
     // Otherwise, returns None.
+    let get_node_id = |str: &str| {
+        let parts: Vec<&str> = str.split('\n').collect();
+        for node_entry in parts {
+            if node_entry.contains("myself") && node_entry.contains("master") {
+                let node_entry_parts: Vec<&str> = node_entry.split(' ').collect();
+                let node_id = node_entry_parts[0];
+                return Some(node_id.to_string());
+            }
+        }
+        None
+    };
+
     match cluster_nodes_output {
         Value::BulkString(val) => match from_utf8(&val) {
-            Ok(str_res) => {
-                let parts: Vec<&str> = str_res.split('\n').collect();
-                for node_entry in parts {
-                    if node_entry.contains("myself") && node_entry.contains("master") {
-                        let node_entry_parts: Vec<&str> = node_entry.split(' ').collect();
-                        let node_id = node_entry_parts[0];
-                        return Some(node_id.to_string());
-                    }
-                }
-                None
-            }
+            Ok(str_res) => get_node_id(str_res),
             Err(e) => panic!("failed to decode INFO response: {:?}", e),
         },
+        Value::VerbatimString { format: _, text } => get_node_id(&text),
         _ => panic!("Recieved unexpected response: {:?}", cluster_nodes_output),
     }
 }
@@ -2063,6 +2102,42 @@ fn test_async_cluster_periodic_checks_update_topology_after_failover() {
             let _ = sleep(futures_time::time::Duration::from_millis(10)).await;
         }
         panic!("Topology change wasn't found!");
+    })
+    .unwrap();
+}
+
+#[test]
+fn test_async_cluster_with_client_name() {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| builder.client_name(RedisCluster::client_name().to_string()),
+        false,
+    );
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
+        let client_info: String = cmd("CLIENT")
+            .arg("INFO")
+            .query_async(&mut connection)
+            .await
+            .unwrap();
+
+        let client_attrs = parse_client_info(&client_info);
+
+        assert!(
+            client_attrs.contains_key("name"),
+            "Could not detect the 'name' attribute in CLIENT INFO output"
+        );
+
+        assert_eq!(
+            client_attrs["name"],
+            RedisCluster::client_name(),
+            "Incorrect client name, expecting: {}, got {}",
+            RedisCluster::client_name(),
+            client_attrs["name"]
+        );
+        Ok::<_, RedisError>(())
     })
     .unwrap();
 }
