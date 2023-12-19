@@ -463,36 +463,7 @@ where
                     }
                     ErrorKind::BusyLoadingError => {
                         let request = this.request.take().unwrap();
-                        /*    let route =  match this.request.info.cmd {
-                            CmdArg::Cmd { cmd, routing } => {
-                                match{routing} {
 
-
-                                }
-                                .slot_addr()
-                            CmdArg::Pipeline {
-                                pipeline,
-                                offset,
-                                count,
-                                route,
-                            } => {
-                                Self::try_pipeline_request(
-                                    pipeline,
-                                    offset,
-                                    count,
-                                    Self::get_connection(info.redirect, route, core, asking),
-                                )
-                                .await
-                            }
-                        }
-                        match route.slot_addr() {
-                            SlotAddr::Master => Next::Retry { request }.into(),
-                            _ => Next::RetryBusyLoadingError {
-                                request,
-                                identifier,
-                            }
-                            .into(),
-                        }*/
                         Next::RetryBusyLoadingError {
                             request,
                             identifier,
@@ -1167,6 +1138,7 @@ where
         core: Core<C>,
         info: RequestInfo<C>,
         identifier: ConnectionIdentifier,
+        route: Route,
     ) -> (OperationTarget, RedisResult<Response>) {
         println!(
             "TRACE: file: {}, line: {} remove_connection_and_try_request ",
@@ -1174,25 +1146,24 @@ where
             line!()
         );
         {
+            let connections_container = core.conn_lock.read().await;
+            //TODO Ask if we need to clone the identifier.
+            if !connections_container.is_connection_replica(identifier.clone(), route) {
+                //TODO: consider exponentioal backoff.
+                return Self::try_request(info, core.clone()).await;
+            }
+        }
+        {
             let mut connections_container: tokio::sync::RwLockWriteGuard<
                 '_,
                 connections_container::ConnectionsContainer<
                     future::Shared<Pin<Box<dyn Future<Output = C> + Send>>>,
                 >,
             > = core.conn_lock.write().await;
-            println!(
-                "TRACE: file: {}, line: {} remove_connection_and_try_request ",
-                file!(),
-                line!()
-            );
+
             connections_container.remove_connection(&identifier);
         }
 
-        println!(
-            "TRACE: file: {}, line: {} remove_connection_and_try_request ",
-            file!(),
-            line!()
-        );
         Self::try_request(info, core.clone()).await
     }
 
@@ -1361,20 +1332,35 @@ where
                     request,
                     identifier,
                 } => {
-                    println!(
-                        "TRACE: file: {}, line: {} remove_connection_and_try_request ",
-                        file!(),
-                        line!()
-                    );
+                    let route: Option<&Route> = match &request.info.cmd {
+                        CmdArg::Cmd { cmd, routing } => {
+                            match{routing} {
+                                    CommandRouting::Route(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route)))/*(Route::SingleNode(SingleNode::SingleNodeRoutingInfo(SingleNodeRoutingInfo::SpecificNode)))*/ =>
+                                    {
+                                        Some(route)}
+                                    _=>{ 
+                                None}
+
+                                }
+                        }
+                        //.slot_addr()
+                        CmdArg::Pipeline {
+                            pipeline,
+                            offset,
+                            count,
+                            route,
+                        } => {
+                            //TODO handle pipeline
+                            
+                            None
+                        }
+                    };
+
                     let future = Self::remove_connection_and_try_request(
                         self.inner.clone(),
                         request.info.clone(),
                         identifier,
-                    );
-                    println!(
-                        "TRACE: file: {}, line: {} remove_connection_and_try_request ",
-                        file!(),
-                        line!()
+                        route.unwrap().clone(),
                     );
                     self.in_flight_requests.push(Box::pin(Request {
                         retry_params: self.inner.cluster_params.retry_params.clone(),
@@ -1383,11 +1369,7 @@ where
                             future: Box::pin(future),
                         },
                     }));
-                    println!(
-                        "TRACE: file: {}, line: {} remove_connection_and_try_request ",
-                        file!(),
-                        line!()
-                    );
+
                 }
                 Next::RefreshSlots { request } => {
                     poll_flush_action =

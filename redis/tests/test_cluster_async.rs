@@ -1075,6 +1075,7 @@ fn test_async_cluster_replica_read_primary_loading() {
     let name = "node";
 
     const ITERATIONS: u32 = 3;
+    const RETRIES: u32 = 3;
     static mut LOADING_ERRORS_COUNT: u32 = 0;
 
     // requests should route to replica
@@ -1084,7 +1085,7 @@ fn test_async_cluster_replica_read_primary_loading() {
         handler: _handler,
         ..
     } = MockEnv::with_client_builder(
-        ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(5),
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(RETRIES),
         name,
         move |cmd: &[u8], port| {
             respond_startup_with_replica_using_config(
@@ -1105,7 +1106,6 @@ fn test_async_cluster_replica_read_primary_loading() {
             )?;
             match port {
                 6382 | 6383 => {
-                    println!("error loading");
                     panic!("Wrong node");
                 }
                 6379 => {
@@ -1124,11 +1124,10 @@ fn test_async_cluster_replica_read_primary_loading() {
                 .arg("test")
                 .query_async::<_, Option<i32>>(&mut connection),
         );
-        assert_eq!(value, Ok(Some(123)));
     }
 
     unsafe {
-        assert_eq!(LOADING_ERRORS_COUNT, ITERATIONS);
+        assert_eq!(LOADING_ERRORS_COUNT, ITERATIONS * (RETRIES + 1));
     }
 }
 

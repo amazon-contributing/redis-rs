@@ -84,6 +84,13 @@ where
         }
     }
 
+    pub(crate) fn is_connection_replica(&self, identifier: Identifier, route: Route) -> bool {
+        let primary_route: Route = Route::new(route.slot(), SlotAddr::Master);
+        let connection = self.lookup_route(&primary_route);
+        let primary_con_identifier = connection.unwrap().0;
+        return identifier.0 != primary_con_identifier.0;
+    }
+
     fn round_robin_read_from_replica(
         &self,
         slot_map_value: &SlotMapValue,
