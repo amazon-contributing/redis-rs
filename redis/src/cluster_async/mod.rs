@@ -128,7 +128,6 @@ where
     /// Send a command to the given `routing`. If `routing` is [None], it will be computed from `cmd`.
     pub async fn route_command(&mut self, cmd: &Cmd, routing: RoutingInfo) -> RedisResult<Value> {
         trace!("route_command");
-        println!("TRACE: file: {}, line: {} route_command ", file!(), line!());
         let (sender, receiver) = oneshot::channel();
         self.0
             .send(Message {
@@ -1032,17 +1031,9 @@ where
         core: Core<C>,
         asking: bool,
     ) -> (OperationTarget, RedisResult<Response>) {
-        println!(
-            "TRACE: file: {}, line: {} try_cmd_request ",
-            file!(),
-            line!()
-        );
-        let route_option = if redirect.is_some() && !matches!(&redirect, Some(Redirect::Primary)) {
-            println!(
-                "TRACE: file: {}, line: {} try_cmd_request ",
-                file!(),
-                line!()
-            );
+
+        let route_option = if redirect.is_some() {
+
             // if we have a redirect, we don't take info from `routing`.
             // TODO - combine the info in `routing` and `redirect` and `asking` into a single structure, so there won't be this question of which field takes precedence.
             SingleNodeRoutingInfo::Random
@@ -1074,20 +1065,12 @@ where
             }
         };
         trace!("route request to single node");
-        println!(
-            "TRACE: file: {}, line: {} try_cmd_request ",
-            file!(),
-            line!()
-        );
+   
         // if we reached this point, we're sending the command only to single node, and we need to find the
         // right connection to the node.
         let (identifier, mut conn) =
             Self::get_connection(redirect, route_option, core, asking).await;
-        println!(
-            "TRACE: file: {}, line: {} try_cmd_request ",
-            file!(),
-            line!()
-        );
+     
         let result = conn.req_packed_command(&cmd).await.map(Response::Single);
         (identifier.into(), result)
     }
@@ -1140,11 +1123,7 @@ where
         identifier: ConnectionIdentifier,
         route: Route,
     ) -> (OperationTarget, RedisResult<Response>) {
-        println!(
-            "TRACE: file: {}, line: {} remove_connection_and_try_request ",
-            file!(),
-            line!()
-        );
+
         {
             let connections_container = core.conn_lock.read().await;
             //TODO Ask if we need to clone the identifier.
