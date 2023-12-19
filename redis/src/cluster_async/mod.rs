@@ -1069,8 +1069,7 @@ where
         // if we reached this point, we're sending the command only to single node, and we need to find the
         // right connection to the node.
         let (identifier, mut conn) =
-            Self::get_connection(redirect, route_option, core, asking).await;
-     
+            Self::get_connection(redirect, route_option, core, asking).await;    
         let result = conn.req_packed_command(&cmd).await.map(Response::Single);
         (identifier.into(), result)
     }
@@ -1117,7 +1116,8 @@ where
         }
     }
 
-    async fn remove_connection_and_try_request(
+
+    async fn handle_loading_error(
         core: Core<C>,
         info: RequestInfo<C>,
         identifier: ConnectionIdentifier,
@@ -1127,12 +1127,16 @@ where
         {
             let connections_container = core.conn_lock.read().await;
             //TODO Ask if we need to clone the identifier.
-            if !connections_container.is_connection_replica(identifier.clone(), route) {
+
+            // If the connection is a primary just retry. 
+            if !connections_container.is_identifier_replica(identifier.clone(), route) {
                 //TODO: consider exponentioal backoff.
                 return Self::try_request(info, core.clone()).await;
             }
         }
         {
+            // If the connection is a replica, remove the connection and retry. 
+            // The connection will be established again on the next call to refresh slots once the replica is no longer in loading state.
             let mut connections_container: tokio::sync::RwLockWriteGuard<
                 '_,
                 connections_container::ConnectionsContainer<
@@ -1319,7 +1323,6 @@ where
                                         Some(route)}
                                     _=>{ 
                                 None}
-
                                 }
                         }
                         //.slot_addr()
@@ -1329,13 +1332,12 @@ where
                             count,
                             route,
                         } => {
-                            //TODO handle pipeline
-                            
+                            //TODO handle pipeline                         
                             None
                         }
                     };
 
-                    let future = Self::remove_connection_and_try_request(
+                    let future = Self::handle_loading_error(
                         self.inner.clone(),
                         request.info.clone(),
                         identifier,
@@ -1348,7 +1350,6 @@ where
                             future: Box::pin(future),
                         },
                     }));
-
                 }
                 Next::RefreshSlots { request } => {
                     poll_flush_action =

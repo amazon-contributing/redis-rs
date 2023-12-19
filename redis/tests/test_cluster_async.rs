@@ -1010,6 +1010,8 @@ fn test_async_cluster_ask_error_when_new_node_is_added() {
 
 #[test]
 fn test_async_cluster_replica_read_replica_loading() {
+    /* Test replica in loading state. The expected behaviour is that the request will be directed to a different replica or the primary.
+    depends on the read from replica policy. */
     let name = "node";
 
     const ITERATIONS: u32 = 3;
@@ -1066,12 +1068,15 @@ fn test_async_cluster_replica_read_replica_loading() {
     }
 
     unsafe {
+        // We expected to get only 2 loading error since the 2 replicas are in loading state.
+        // The third iteration will be directed to the primary since the connections of the replicas were removed.
         assert_eq!(LOADING_ERRORS_COUNT, 2);
     }
 }
 
 #[test]
 fn test_async_cluster_replica_read_primary_loading() {
+    // Test primary in loading state. The expected behaviour is that the request will be retried until the primary is no loner in loading state.
     let name = "node";
 
     const ITERATIONS: u32 = 3;

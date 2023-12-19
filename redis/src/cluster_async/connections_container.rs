@@ -84,7 +84,8 @@ where
         }
     }
 
-    pub(crate) fn is_connection_replica(&self, identifier: Identifier, route: Route) -> bool {
+    pub(crate) fn is_identifier_replica(&self, identifier: Identifier, route: Route) -> bool {
+        // Create a new temp route to compare it with the identifier of the connection.
         let primary_route: Route = Route::new(route.slot(), SlotAddr::Master);
         let connection = self.lookup_route(&primary_route);
         let primary_con_identifier = connection.unwrap().0;
