@@ -1048,7 +1048,6 @@ fn test_async_cluster_replica_read_replica_loading() {
             match port {
                 6382 | 6383 => {
                     unsafe {
-                        println!("error loading");
                         LOADING_ERRORS_COUNT = LOADING_ERRORS_COUNT + 1;
                     }
                     Err(parse_redis_value(b"-LOADING\r\n"))

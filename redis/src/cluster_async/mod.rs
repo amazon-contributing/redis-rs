@@ -1171,15 +1171,7 @@ where
                     ConnectionCheck::Found,
                 )
             }
-            Some(Redirect::Primary) => match route {
-                SingleNodeRoutingInfo::Random => ConnectionCheck::Nothing,
-                SingleNodeRoutingInfo::SpecificNode(route) => {
-                    let route1 = Route::new(route.slot(), SlotAddr::Master);
-                    read_guard
-                        .connection_for_route(&route1)
-                        .map_or(ConnectionCheck::Nothing, ConnectionCheck::Found)
-                }
-            },
+
             None => match route {
                 SingleNodeRoutingInfo::SpecificNode(route) => read_guard
                     .connection_for_route(&route)
