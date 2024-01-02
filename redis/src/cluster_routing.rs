@@ -300,7 +300,7 @@ impl ResponsePolicy {
             b"WAIT" => Some(ResponsePolicy::Aggregate(AggregateOp::Min)),
 
             b"ACL SETUSER" | b"ACL DELUSER" | b"ACL SAVE" | b"CLIENT SETNAME"
-            | b"CLIENT SETINFO" | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE"
+            | b"CLIENT SETINFO" | b"CONFIG SET" | b"FT.CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE"
             | b"FLUSHALL" | b"FLUSHDB" | b"FUNCTION DELETE" | b"FUNCTION FLUSH"
             | b"FUNCTION LOAD" | b"FUNCTION RESTORE" | b"MEMORY PURGE" | b"MSET" | b"PING"
             | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SLOWLOG RESET" => {
@@ -344,6 +344,7 @@ impl RoutingInfo {
                 | b"SLOWLOG LEN"
                 | b"SLOWLOG RESET"
                 | b"CONFIG SET"
+                | b"FT.CONFIG SET"
                 | b"CONFIG RESETSTAT"
                 | b"CONFIG REWRITE"
                 | b"SCRIPT FLUSH"
@@ -416,7 +417,9 @@ impl RoutingInfo {
             | b"XGROUP SETID"
             | b"XINFO CONSUMERS"
             | b"XINFO GROUPS"
-            | b"XINFO STREAM" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
+            | b"XINFO STREAM"
+            | b"FT.CURSOR DEL"
+            | b"FT.CURSOR READ" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
             b"XREAD" | b"XREADGROUP" => {
                 let streams_position = r.position(b"STREAMS")?;
                 r.arg_idx(streams_position + 1)
@@ -551,7 +554,7 @@ pub trait Routable {
         let mut primary_command = match primary_command.as_slice() {
             b"XGROUP" | b"OBJECT" | b"SLOWLOG" | b"FUNCTION" | b"MODULE" | b"COMMAND"
             | b"PUBSUB" | b"CONFIG" | b"MEMORY" | b"XINFO" | b"CLIENT" | b"ACL" | b"SCRIPT"
-            | b"CLUSTER" | b"LATENCY" => primary_command,
+            | b"CLUSTER" | b"LATENCY" | b"FT.CONFIG" | b"FT.CURSOR" => primary_command,
             _ => {
                 return Some(primary_command);
             }
