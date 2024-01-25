@@ -593,13 +593,7 @@ fn test_cluster_async_cannot_connect_to_server_with_unknown_host_name() {
     };
     let client_builder = ClusterClient::builder(vec![&*format!("redis://{name}")]);
     let client = client_builder.build().unwrap();
-    MOCK_CONN_UTILS.write().unwrap().insert(
-        name.to_string(),
-        MockConnectionUtils {
-            handler: Some(Arc::new(handler)),
-            ..Default::default()
-        },
-    );
+    add_new_mock_connection_behavior(name, Arc::new(handler));
     let connection = client.get_generic_connection::<MockConnection>();
     assert!(connection.is_err());
     let err = connection.err().unwrap();
