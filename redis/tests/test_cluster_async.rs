@@ -2266,7 +2266,7 @@ fn test_async_cluster_recover_disconnected_management_connections() {
                     .unwrap(),
             )
             .unwrap();
-            string.split("\n").filter_map(|str|if str.is_empty() {None} else {Some(str.to_string())}).collect::<Vec<_>>()
+            string.split('\n').filter_map(|str|if str.is_empty() {None} else {Some(str.to_string())}).collect::<Vec<_>>()
         };
 
         let mut connection = cluster.async_connection().await;
@@ -2285,8 +2285,8 @@ fn test_async_cluster_recover_disconnected_management_connections() {
         let connections = get_connection_list(connection.clone(), routing.clone()).await;
         assert_eq!(connections.len(), 2);
 
-        for i in 0..connections.len() {
-            let id = parse_client_info(&connections[i])["id"].clone();
+        for connections_info in connections {
+            let id = parse_client_info(&connections_info)["id"].clone();
             if id != connection_id {
                 let mut client_kill_cmd = redis::cmd("CLIENT");
                 client_kill_cmd.arg("KILL").arg("ID").arg(id);
