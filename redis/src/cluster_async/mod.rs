@@ -1743,12 +1743,9 @@ where
         .await;
     let failed_identifiers = topology_join_results
         .iter()
-        .filter_map(|(identifier, _, res)| {
-            if res.is_ok() {
-                None
-            } else {
-                Some(identifier.clone())
-            }
+        .filter_map(|(identifier, _, res)| match res {
+            Err(err) if err.is_unrecoverable_error() => Some(identifier.clone()),
+            _ => None,
         })
         .collect();
     let topology_values = topology_join_results.iter().filter_map(|(_, addr, res)| {
