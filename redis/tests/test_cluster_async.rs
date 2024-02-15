@@ -14,6 +14,7 @@ use futures::prelude::*;
 use futures::stream;
 use futures_time::task::sleep;
 use once_cell::sync::Lazy;
+use redis::cluster_async::ClusterConnection;
 use redis::cluster_routing::Route;
 use redis::cluster_routing::SingleNodeRoutingInfo;
 use redis::cluster_routing::SlotAddr;
@@ -2233,6 +2234,81 @@ fn test_async_cluster_periodic_checks_update_topology_after_failover() {
             let _ = sleep(futures_time::time::Duration::from_millis(10)).await;
         }
         panic!("Topology change wasn't found!");
+    })
+    .unwrap();
+}
+
+#[test]
+fn test_async_cluster_recover_disconnected_management_connections() {
+    // This test aims to verify that the management connections used for periodic checks are reconnected, in case that they get killed.
+    // In order to test this, we choose a single node, kill all connections to it which aren't user connections, and then wait until new
+    // connections are created.
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| builder.periodic_topology_checks(Duration::from_millis(10)),
+        false,
+    );
+
+    block_on_all(async move {
+        let routing = RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::new(
+            1,
+            SlotAddr::Master,
+        )));
+
+        let get_connection_list = |mut connection: ClusterConnection, routing: RoutingInfo| async move {
+            let mut client_list_cmd = redis::cmd("CLIENT");
+            client_list_cmd.arg("LIST");
+            let string = String::from_owned_redis_value(
+                connection
+                    .route_command(&client_list_cmd, routing.clone())
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            string.split("\n").filter_map(|str|if str.is_empty() {None} else {Some(str.to_string())}).collect::<Vec<_>>()
+        };
+
+        let mut connection = cluster.async_connection().await;
+        let max_requests = 5000;
+
+        let mut client_info_cmd = redis::cmd("CLIENT");
+        client_info_cmd.arg("INFO");
+        let connection_info = String::from_owned_redis_value(
+            connection
+                .route_command(&client_info_cmd, routing.clone())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let connection_id = parse_client_info(&connection_info)["id"].clone();
+        let connections = get_connection_list(connection.clone(), routing.clone()).await;
+        assert_eq!(connections.len(), 2);
+
+        for i in 0..connections.len() {
+            let id = parse_client_info(&connections[i])["id"].clone();
+            if id != connection_id {
+                let mut client_kill_cmd = redis::cmd("CLIENT");
+                client_kill_cmd.arg("KILL").arg("ID").arg(id);
+                connection
+                .route_command(&client_kill_cmd, routing.clone())
+                .await
+                .unwrap();
+            }
+        }
+        let connections = get_connection_list(connection.clone(), routing.clone()).await;
+        assert_eq!(connections.len(), 1);
+
+        for _ in 0..max_requests {
+            let _ = sleep(futures_time::time::Duration::from_millis(10)).await;
+
+            let connections = get_connection_list(connection.clone(), routing.clone()).await;
+            if connections.len() == 2 {
+                return Ok(());
+            }
+        }
+
+        panic!("Topology connection didn't reconnect!");
     })
     .unwrap();
 }
