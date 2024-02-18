@@ -42,7 +42,7 @@ mod test_connect_and_check {
             ConnectAndCheckResult::ManagementConnectionFailed { .. } => {
                 panic!("Expected full success, got partial success")
             }
-            ConnectAndCheckResult::Failed(_) => panic!("Expected partial result, got a failure"),
+            ConnectAndCheckResult::Failed(_) => panic!("Expected full successs, got a failure"),
         }
     }
 
@@ -79,6 +79,36 @@ mod test_connect_and_check {
     }
 
     #[tokio::test]
+    async fn attempt_retry_connection_attempts() {
+        // Test that if a connection attempt failed, it will be retried according to the reconnect strategy.
+        let name = "attempt_retry_connection_attempts";
+
+        let _handle = MockConnectionBehavior::register_new(
+            name,
+            Arc::new(|cmd, _| {
+                respond_startup(name, cmd)?;
+                Ok(())
+            }),
+        );
+        modify_mock_connection_behavior(name, |behavior| {
+            // The second connection will fail
+            behavior.return_connection_err =
+                ShouldReturnConnectionError::OnOddIdx(AtomicUsize::new(0))
+        });
+
+        let result = connect_and_check::<MockConnection>(
+            &format!("{name}:6379"),
+            ClusterParams::default(),
+            None,
+            RefreshConnectionType::AllConnections,
+            None,
+        )
+        .await;
+        let node = assert_full_success(result);
+        assert!(node.management_connection.is_some());
+    }
+
+    #[tokio::test]
     async fn test_connect_and_check_all_connections_one_connection_err_returns_only_user_conn() {
         // Test that upon refreshing all connections, if only one of the new connections fail,
         // the other successful connection will be used as the user connection, as a partial success.
@@ -93,8 +123,10 @@ mod test_connect_and_check {
         );
         modify_mock_connection_behavior(name, |behavior| {
             // The second connection will fail
-            behavior.return_connection_err =
-                ShouldReturnConnectionError::OnOddIdx(AtomicUsize::new(0))
+            behavior.return_connection_err = ShouldReturnConnectionError::SucceedOn {
+                counter: AtomicUsize::new(0),
+                target: 0,
+            }
         });
 
         let params = ClusterParams::default();
@@ -112,8 +144,10 @@ mod test_connect_and_check {
 
         modify_mock_connection_behavior(name, |behavior| {
             // The first connection will fail
-            behavior.return_connection_err =
-                ShouldReturnConnectionError::OnOddIdx(AtomicUsize::new(1));
+            behavior.return_connection_err = ShouldReturnConnectionError::SucceedOn {
+                counter: AtomicUsize::new(0),
+                target: 1,
+            }
         });
 
         let result = connect_and_check::<MockConnection>(

@@ -11,6 +11,14 @@ use crate::{
     ErrorKind, RedisError, RedisResult,
 };
 
+#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+use backoff_std_async::future::retry;
+#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+use backoff_std_async::{Error as BackoffError, ExponentialBackoff};
+#[cfg(feature = "tokio-comp")]
+use backoff_tokio::future::retry;
+#[cfg(feature = "tokio-comp")]
+use backoff_tokio::{Error as BackoffError, ExponentialBackoff};
 use futures::prelude::*;
 use futures_time::future::FutureExt;
 use futures_util::{future::BoxFuture, join};
@@ -429,10 +437,36 @@ async fn create_connection<C>(
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
+    let retry_strategy = ExponentialBackoff {
+        initial_interval: std::time::Duration::from_millis(
+            params.exponential_backoff.factor as u64,
+        ),
+        multiplier: params.exponential_backoff.exponent_base as f64,
+        max_elapsed_time: None,
+        ..Default::default()
+    };
     let connection_timeout = params.connection_timeout;
     let response_timeout = params.response_timeout;
-    let info = get_connection_info(node, params)?;
-    C::connect(info, response_timeout, connection_timeout, socket_addr).await
+    let info = get_connection_info(node, params.clone())?;
+    let counter = std::sync::atomic::AtomicU32::new(params.exponential_backoff.number_of_retries);
+
+    retry(retry_strategy, || async {
+        C::connect(
+            info.clone(),
+            response_timeout,
+            connection_timeout,
+            socket_addr,
+        )
+        .await
+        .map_err(|err| {
+            if counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed) > 0 {
+                BackoffError::from(err)
+            } else {
+                BackoffError::Permanent(err)
+            }
+        })
+    })
+    .await
 }
 
 /// The function returns None if the checked connection/s are healthy. Otherwise, it returns the type of the unhealthy connection/s.

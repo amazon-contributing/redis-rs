@@ -117,6 +117,8 @@ pub enum ShouldReturnConnectionError {
     Yes,
     /// Return connection error when the internal index is an odd number
     OnOddIdx(AtomicUsize),
+    /// Return connection error whenever the incrementing counter is different from the target.
+    SucceedOn { counter: AtomicUsize, target: usize },
 }
 
 #[derive(Clone)]
@@ -156,6 +158,12 @@ impl cluster_async::Connect for MockConnection {
             ShouldReturnConnectionError::Yes => return conn_err,
             ShouldReturnConnectionError::OnOddIdx(curr_idx) => {
                 if curr_idx.fetch_add(1, Ordering::SeqCst) % 2 != 0 {
+                    // raise an error on each odd number
+                    return conn_err;
+                }
+            }
+            ShouldReturnConnectionError::SucceedOn { counter, target } => {
+                if counter.fetch_add(1, Ordering::SeqCst) != *target {
                     // raise an error on each odd number
                     return conn_err;
                 }

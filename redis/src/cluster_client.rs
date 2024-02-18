@@ -36,6 +36,7 @@ struct BuilderParams {
     client_name: Option<String>,
     protocol: ProtocolVersion,
     response_timeout: Option<Duration>,
+    exponential_backoff: Option<ExponentialBackoffStrategy>,
 }
 
 #[derive(Clone)]
@@ -75,6 +76,27 @@ impl RetryParams {
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct ExponentialBackoffStrategy {
+    pub(crate) exponent_base: u32,
+    pub(crate) factor: u32,
+    pub(crate) number_of_retries: u32,
+}
+
+impl Default for ExponentialBackoffStrategy {
+    fn default() -> Self {
+        const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u32 = 2;
+        const DEFAULT_CONNECTION_RETRY_FACTOR: u32 = 100;
+        const DEFAULT_NUMBER_OF_CONNECTION_RETRIESE: u32 = 6;
+
+        Self {
+            exponent_base: DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
+            factor: DEFAULT_CONNECTION_RETRY_FACTOR,
+            number_of_retries: DEFAULT_NUMBER_OF_CONNECTION_RETRIESE,
+        }
+    }
+}
+
 /// Redis cluster specific parameters.
 #[derive(Default, Clone)]
 #[doc(hidden)]
@@ -93,6 +115,8 @@ pub struct ClusterParams {
     pub(crate) protocol: ProtocolVersion,
     pub(crate) connection_timeout: Duration,
     pub(crate) response_timeout: Duration,
+    /// Made public only for testing
+    pub(crate) exponential_backoff: ExponentialBackoffStrategy,
 }
 
 impl ClusterParams {
@@ -119,6 +143,7 @@ impl ClusterParams {
             client_name: value.client_name,
             protocol: value.protocol,
             response_timeout: value.response_timeout.unwrap_or(Duration::MAX),
+            exponential_backoff: value.exponential_backoff.unwrap_or_default(),
         })
     }
 }
@@ -351,6 +376,23 @@ impl ClusterClientBuilder {
     /// If enabled, the cluster will only wait the given time to each response from each node.
     pub fn response_timeout(mut self, response_timeout: Duration) -> ClusterClientBuilder {
         self.builder_params.response_timeout = Some(response_timeout);
+        self
+    }
+
+    /// Sets the exponential backoff for cluster node reconnection attempts.
+    ///
+    /// If not set, defaults will be used.
+    pub fn exponential_backoff(
+        mut self,
+        exponent_base: u32,
+        factor: u32,
+        number_of_retries: u32,
+    ) -> ClusterClientBuilder {
+        self.builder_params.exponential_backoff = Some(ExponentialBackoffStrategy {
+            exponent_base,
+            factor,
+            number_of_retries,
+        });
         self
     }
 
