@@ -339,6 +339,7 @@ impl ResponsePolicy {
 impl RoutingInfo {
     /// Returns true if the `cmd`` should be routed to all nodes.
     pub fn is_all_nodes(cmd: &[u8]) -> bool {
+        // TODO - this is a duplication of the match in `for_routable`. Should find some way to remove this.
         matches!(
             cmd,
             b"ACL SETUSER"
@@ -369,13 +370,18 @@ impl RoutingInfo {
         R: Routable + ?Sized,
     {
         let cmd = &r.command()?[..];
-        if Self::is_all_nodes(cmd) {
-            return Some(RoutingInfo::MultiNode((
-                MultipleNodeRoutingInfo::AllNodes,
-                ResponsePolicy::for_command(cmd),
-            )));
-        }
         match cmd {
+            b"ACL SETUSER" | b"ACL DELUSER" | b"ACL SAVE" | b"CLIENT SETNAME"
+            | b"CLIENT SETINFO" | b"SLOWLOG GET" | b"SLOWLOG LEN" | b"SLOWLOG RESET"
+            | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE" | b"SCRIPT FLUSH"
+            | b"SCRIPT LOAD" | b"LATENCY RESET" | b"LATENCY GRAPH" | b"LATENCY HISTOGRAM"
+            | b"LATENCY HISTORY" | b"LATENCY DOCTOR" | b"LATENCY LATEST" => {
+                Some(RoutingInfo::MultiNode((
+                    MultipleNodeRoutingInfo::AllNodes,
+                    ResponsePolicy::for_command(cmd),
+                )))
+            }
+
             b"RANDOMKEY"
             | b"KEYS"
             | b"SCRIPT EXISTS"
