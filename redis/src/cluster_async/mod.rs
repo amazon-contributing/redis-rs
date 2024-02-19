@@ -952,25 +952,16 @@ where
             }
             let _ = sleep(interval_duration.into()).await;
 
-            let retry_strategy = ExponentialBackoff {
-                initial_interval: DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL,
-                max_interval: DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT,
-                ..Default::default()
-            };
-            let topology_check_res = retry(retry_strategy, || {
-                Self::check_for_topology_diff(inner.clone()).map_err(BackoffError::from)
-            })
-            .await;
-            if let Ok(true) = topology_check_res {
+            if Self::check_for_topology_diff(inner.clone()).await {
                 let _ = Self::refresh_slots_with_retries(inner.clone()).await;
-            };
+            }
         }
     }
 
     /// Queries log2n nodes (where n represents the number of cluster nodes) to determine whether their
     /// topology view differs from the one currently stored in the connection manager.
     /// Returns true if change was detected, otherwise false.
-    async fn check_for_topology_diff(inner: Arc<InnerCore<C>>) -> RedisResult<bool> {
+    async fn check_for_topology_diff(inner: Arc<InnerCore<C>>) -> bool {
         let read_guard = inner.conn_lock.read().await;
         let num_of_nodes: usize = read_guard.len();
         // TODO: Starting from Rust V1.67, integers has logarithms support.
@@ -987,7 +978,7 @@ where
 
         if let Ok((_, found_topology_hash)) = res {
             if read_guard.get_current_topology_hash() != found_topology_hash {
-                return Ok(true);
+                return true;
             }
         }
         drop(read_guard);
@@ -999,7 +990,7 @@ where
         )
         .await;
 
-        Ok(false)
+        false
     }
 
     async fn refresh_slots(
