@@ -2260,21 +2260,21 @@ fn test_async_cluster_recover_disconnected_management_connections() {
         let max_requests = 5000;
 
         let connections = get_clients_names_to_ids(&mut connection, routing.clone().into()).await;
-        assert_eq!(connections.len(), 2);
+        assert!(connections.contains_key(MANAGEMENT_CONN_NAME));
         let management_conn_id = connections.get(MANAGEMENT_CONN_NAME).unwrap();
 
         // Get the connection ID of the management connection
         kill_connection(&mut connection, management_conn_id).await;
 
         let connections = get_clients_names_to_ids(&mut connection, routing.clone().into()).await;
-        assert_eq!(connections.len(), 1);
+        assert!(!connections.contains_key(MANAGEMENT_CONN_NAME));
 
         for _ in 0..max_requests {
             let _ = sleep(futures_time::time::Duration::from_millis(10)).await;
 
             let connections =
                 get_clients_names_to_ids(&mut connection, routing.clone().into()).await;
-            if connections.len() == 2 {
+            if connections.contains_key(MANAGEMENT_CONN_NAME) {
                 return Ok(());
             }
         }
