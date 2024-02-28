@@ -1,8 +1,8 @@
 use futures::{prelude::*, StreamExt};
 use redis::aio::ConnectionLike;
 use redis::{
-    aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, PushInfo, PushKind, RedisResult,
-    Value,
+    aio::MultiplexedConnection, cmd, pipe, AsyncCommands, ErrorKind, PushInfo, PushKind,
+    RedisResult, Value,
 };
 use tokio::sync::mpsc::error::TryRecvError;
 
@@ -207,6 +207,23 @@ fn test_error(con: &MultiplexedConnection) -> impl Future<Output = RedisResult<(
             })
             .await
     }
+}
+
+#[test]
+fn test_pipe_over_multiplexed_connection() {
+    let ctx = TestContext::new();
+    block_on_all(async move {
+        let mut con = ctx.multiplexed_async_connection().await?;
+        let mut pipe = pipe();
+        pipe.zrange("zset", 0, 0);
+        pipe.zrange("zset", 0, 0);
+        let frames = con.send_packed_commands(&pipe, 0, 2).await?;
+        assert_eq!(frames.len(), 2);
+        assert!(matches!(frames[0], redis::Value::Array(_)));
+        assert!(matches!(frames[1], redis::Value::Array(_)));
+        RedisResult::Ok(())
+    })
+    .unwrap();
 }
 
 #[test]

@@ -33,8 +33,13 @@ type PipelineOutput = oneshot::Sender<RedisResult<Value>>;
 
 struct InFlight {
     output: PipelineOutput,
+    // How many responses are expected for this request.
     expected_response_count: usize,
+    // how many responses have been received, out of `expected_response_count`.
     current_response_count: usize,
+    // Accumulated responses. If `expected_response_count` == 1 this will either be `None` or the returned responses.
+    // If `expected_response_count` > 1 then this might be `None` if no response was received, some value if only a single response was received,
+    // or `Value::Array` containing all received responses so far.
     buffer: Option<Value>,
     first_err: Option<RedisError>,
 }
@@ -146,7 +151,9 @@ where
                 Ok(item) => {
                     if !skip_value {
                         entry.buffer = Some(match entry.buffer.take() {
-                            Some(Value::Array(mut values)) => {
+                            // We check for `entry.current_response_count > 1` because the first response might be a `Value::Array`, so we need to disambiguate
+                            // between a single received value, and a container of all received values.
+                            Some(Value::Array(mut values)) if entry.current_response_count > 1 => {
                                 values.push(item);
                                 Value::Array(values)
                             }
