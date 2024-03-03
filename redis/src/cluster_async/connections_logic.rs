@@ -81,13 +81,14 @@ pub(crate) async fn get_or_create_conn<C>(
     node: Option<AsyncClusterNode<C>>,
     params: &ClusterParams,
     conn_type: RefreshConnectionType,
+    is_primary: bool,
 ) -> RedisResult<AsyncClusterNode<C>>
 where
     C: ConnectionLike + Send + Clone + Sync + Connect + 'static,
 {
     if let Some(node) = node {
         if let Some(ref ip) = node.ip {
-            if has_dns_changed(addr, ip).await {
+            if !is_primary && has_dns_changed(addr, ip).await {
                 return connect_and_check(
                     addr,
                     params.clone(),

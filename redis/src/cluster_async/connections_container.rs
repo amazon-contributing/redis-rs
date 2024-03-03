@@ -121,6 +121,12 @@ where
                 .any(|slot_addrs| slot_addrs.primary == identifier.0)
     }
 
+    /// Returns true if the address represents a known primary node.
+    pub(crate) fn is_primary_for_address(&self, address: &str) -> bool {
+        let identifier = Identifier(address.into());
+        self.is_primary(&identifier)
+    }
+
     fn round_robin_read_from_replica(
         &self,
         slot_map_value: &SlotMapValue,

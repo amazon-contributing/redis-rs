@@ -818,8 +818,15 @@ where
                     let addr_option = connections_container.address_for_identifier(&identifier);
                     let node_option = connections_container.remove_node(&identifier);
                     if let Some(addr) = addr_option {
-                        let node =
-                            get_or_create_conn(&addr, node_option, cluster_params, conn_type).await;
+                        let is_primary = connections_container.is_primary(&identifier);
+                        let node = get_or_create_conn(
+                            &addr,
+                            node_option,
+                            cluster_params,
+                            conn_type,
+                            is_primary,
+                        )
+                        .await;
                         if let Ok(node) = node {
                             connections_container.replace_or_add_connection_for_address(addr, node);
                         }
@@ -1057,11 +1064,13 @@ where
             .fold(
                 ConnectionsMap(HashMap::with_capacity(nodes_len)),
                 |mut connections, (addr, node)| async {
+                    let is_primary = read_guard.is_primary_for_address(addr.as_str());
                     let node = get_or_create_conn(
                         addr,
                         node,
                         &inner.cluster_params,
                         RefreshConnectionType::AllConnections,
+                        is_primary,
                     )
                     .await;
                     if let Ok(node) = node {
