@@ -86,19 +86,19 @@ where
     C: ConnectionLike + Send + Clone + Sync + Connect + 'static,
 {
     if let Some(node) = node {
-        if let Some(ref ip) = node.ip {
-            if has_dns_changed(addr, ip).await {
-                return connect_and_check(
-                    addr,
-                    params.clone(),
-                    None,
-                    RefreshConnectionType::AllConnections,
-                    None,
-                )
-                .await
-                .get_node();
-            }
-        };
+        // if let Some(ref ip) = node.ip {
+        //     if has_dns_changed(addr, ip).await {
+        //         return connect_and_check(
+        //             addr,
+        //             params.clone(),
+        //             None,
+        //             RefreshConnectionType::AllConnections,
+        //             None,
+        //         )
+        //         .await
+        //         .get_node();
+        //     }
+        // };
         match check_node_connections(&node, params, conn_type, addr).await {
             None => Ok(node),
             Some(conn_type) => connect_and_check(addr, params.clone(), None, conn_type, Some(node))
