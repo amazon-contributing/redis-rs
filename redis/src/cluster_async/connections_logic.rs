@@ -2,14 +2,13 @@ use std::net::{IpAddr, SocketAddr};
 
 use super::{connections_container::ClusterNode, Connect};
 use crate::{
-    aio::{get_socket_addrs, ConnectionLike},
+    aio::{get_socket_addrs, ConnectionLike, Runtime},
     cluster::get_connection_info,
     cluster_client::ClusterParams,
     ErrorKind, RedisError, RedisResult,
 };
 
 use futures::prelude::*;
-use futures_time::future::FutureExt;
 use futures_util::{future::BoxFuture, join};
 use tracing::warn;
 
@@ -492,13 +491,12 @@ where
     }
 }
 
-async fn check_connection<C>(conn: &mut C, timeout: futures_time::time::Duration) -> RedisResult<()>
+async fn check_connection<C>(conn: &mut C, timeout: std::time::Duration) -> RedisResult<()>
 where
     C: ConnectionLike + Send + 'static,
 {
-    crate::cmd("PING")
-        .query_async::<_, String>(conn)
-        .timeout(timeout)
+    Runtime::locate()
+        .timeout(timeout, crate::cmd("PING").query_async::<_, String>(conn))
         .await??;
     Ok(())
 }
