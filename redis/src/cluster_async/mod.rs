@@ -957,7 +957,7 @@ where
             if shutdown_flag.load(Ordering::Relaxed) {
                 return;
             }
-            let _ = boxed_sleep(interval_duration.into()).await;
+            let _ = boxed_sleep(interval_duration).await;
 
             if Self::check_for_topology_diff(inner.clone()).await {
                 let _ = Self::refresh_slots_with_retries(inner.clone()).await;
@@ -1420,7 +1420,7 @@ where
         } else {
             // If the connection is primary, just sleep and retry
             let sleep_duration = core.cluster_params.retry_params.wait_time_for_retry(retry);
-            boxed_sleep(sleep_duration.into()).await;
+            boxed_sleep(sleep_duration).await;
         }
 
         Self::try_request(info, core).await
@@ -1787,7 +1787,6 @@ impl Connect for MultiplexedConnection {
         async move {
             let connection_info = info.into_connection_info()?;
             let client = crate::Client::open(connection_info)?;
-            let connection_timeout: std::time::Duration = connection_timeout.into();
 
             match Runtime::locate() {
                 #[cfg(feature = "tokio-comp")]

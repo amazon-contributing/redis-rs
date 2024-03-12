@@ -394,7 +394,7 @@ where
 {
     let read_from_replicas = params.read_from_replicas
         != crate::cluster_slotmap::ReadFromReplicaStrategy::AlwaysFromPrimary;
-    let connection_timeout = params.connection_timeout.into();
+    let connection_timeout = params.connection_timeout;
     check_connection(conn, connection_timeout).await?;
     if read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect
@@ -443,7 +443,7 @@ pub async fn check_node_connections<C>(
 where
     C: ConnectionLike + Send + 'static + Clone,
 {
-    let timeout = params.connection_timeout.into();
+    let timeout = params.connection_timeout;
     let (check_mgmt_connection, check_user_connection) = match conn_type {
         RefreshConnectionType::OnlyUserConnection => (false, true),
         RefreshConnectionType::OnlyManagementConnection => (true, false),
