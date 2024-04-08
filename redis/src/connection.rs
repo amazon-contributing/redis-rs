@@ -12,12 +12,10 @@ use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, PushKind, RedisError, RedisResult, ToRedisArgs,
-    Value,
+    Value, HashMap
 };
 use crate::{from_owned_redis_value, ProtocolVersion};
 
-#[cfg(unix)]
-use crate::types::HashMap;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::vec::IntoIter;
