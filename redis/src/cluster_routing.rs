@@ -398,7 +398,10 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"XINFO CONSUMERS"
         | b"XINFO GROUPS"
         | b"XINFO STREAM"
-        | b"OBJECT FREQ" => RouteBy::SecondArg,
+        | b"OBJECT ENCODING"
+        | b"OBJECT FREQ"
+        | b"OBJECT IDLETIME"
+        | b"OBJECT REFCOUNT" => RouteBy::SecondArg,
 
         b"XREAD" | b"XREADGROUP" => RouteBy::StreamsIndex,
 
