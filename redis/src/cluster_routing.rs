@@ -345,6 +345,7 @@ enum RouteBy {
     MultiShardWithValues,
     Random,
     SecondArg,
+    SecondArgAfterKeyCount,
     SecondArgSlot,
     StreamsIndex,
     ThirdArgAfterKeyCount,
@@ -388,9 +389,11 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
             RouteBy::Undefined
         }
 
-        b"EVALSHA" | b"EVAL" => RouteBy::ThirdArgAfterKeyCount,
+        b"EVALSHA" | b"EVAL" | b"BLMPOP" | b"BZMPOP" => RouteBy::ThirdArgAfterKeyCount,
 
-        b"XGROUP CREATE"
+        b"MEMORY USAGE"
+        | b"PFDEBUG"
+        | b"XGROUP CREATE"
         | b"XGROUP CREATECONSUMER"
         | b"XGROUP DELCONSUMER"
         | b"XGROUP DESTROY"
@@ -402,6 +405,14 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"OBJECT FREQ"
         | b"OBJECT IDLETIME"
         | b"OBJECT REFCOUNT" => RouteBy::SecondArg,
+
+        b"LMPOP"
+        | b"SINTERCARD"
+        | b"ZDIFF"
+        | b"ZINTER"
+        | b"ZINTERCARD"
+        | b"ZMPOP"
+        | b"ZUNION" => RouteBy::SecondArgAfterKeyCount,
 
         b"XREAD" | b"XREADGROUP" => RouteBy::StreamsIndex,
 
@@ -466,7 +477,8 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"TIME"
         | b"WAITAOF" => RouteBy::Random,
 
-        b"CLUSTER COUNTKEYSINSLOT"
+        b"CLUSTER ADDSLOTS"
+        | b"CLUSTER COUNTKEYSINSLOT"
         | b"CLUSTER DELSLOTS"
         | b"CLUSTER DELSLOTSRANGE"
         | b"CLUSTER GETKEYSINSLOT"
@@ -487,6 +499,7 @@ impl RoutingInfo {
         match base_routing(cmd) {
             RouteBy::FirstKey
             | RouteBy::SecondArg
+            | RouteBy::SecondArgAfterKeyCount
             | RouteBy::ThirdArgAfterKeyCount
             | RouteBy::SecondArgSlot
             | RouteBy::StreamsIndex
@@ -534,6 +547,18 @@ impl RoutingInfo {
             }
 
             RouteBy::SecondArg => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
+
+            RouteBy::SecondArgAfterKeyCount => {
+                let key_count = r
+                    .arg_idx(1)
+                    .and_then(|x| std::str::from_utf8(x).ok())
+                    .and_then(|x| x.parse::<u64>().ok())?;
+                if key_count == 0 {
+                    Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                } else {
+                    r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key))
+                }
+            }
 
             RouteBy::StreamsIndex => {
                 let streams_position = r.position(b"STREAMS")?;
