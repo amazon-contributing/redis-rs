@@ -111,18 +111,31 @@ def main():
         if len(split_name) == 0:
             raise Exception(f"Encountered json with an empty command name in file '{filename}'")
 
-        json_key_index = get_first_key_index(command_args)
+        json_key_index, is_key_optional = get_first_key_info(command_args)
+        if is_key_optional:
+            uncategorized.add_command(command_name)
+            continue
+
         if json_key_index == -1:
-            json_slot_index = get_first_slot_index(command_args)
+            # the command does not have a key argument, check for a slot argument
+            json_slot_index, is_slot_optional = get_first_slot_info(command_args)
+            if is_slot_optional:
+                uncategorized.add_command(command_name)
+                continue
+
             # cluster_routing.rs considers each word in the command name to be an argument, but the json does not
             cluster_routing_slot_index = -1 if json_slot_index == -1 else len(split_name) + json_slot_index
             if cluster_routing_slot_index == 2:
                 second_arg_slot.add_command(command_name)
                 continue
 
+            # the command does not have a slot argument, check for a "STREAMS" token
             if has_streams_token(command_args):
                 streams_index.add_command(command_name)
                 continue
+
+            uncategorized.add_command(command_name)
+            continue
 
         # cluster_routing.rs considers each word in the command name to be an argument, but the json does not
         cluster_routing_key_index = -1 if json_key_index == -1 else len(split_name) + json_key_index
@@ -160,20 +173,24 @@ def get_request_policy(command_tips):
     return None
 
 
-def get_first_key_index(args_info_json):
+def get_first_key_info(args_info_json) -> tuple[int, bool]:
     for i in range(len(args_info_json)):
-        if args_info_json[i]["type"].lower() == "key":
-            return i
+        info = args_info_json[i]
+        if info["type"].lower() == "key":
+            is_optional = "optional" in info and info["optional"]
+            return i, is_optional
 
-    return -1
+    return -1, False
 
 
-def get_first_slot_index(args_info_json):
+def get_first_slot_info(args_info_json) -> tuple[int, bool]:
     for i in range(len(args_info_json)):
-        if args_info_json[i]["name"].lower() == "slot":
-            return i
+        info = args_info_json[i]
+        if info["name"].lower() == "slot":
+            is_optional = "optional" in info and info["optional"]
+            return i, is_optional
 
-    return -1
+    return -1, False
 
 
 def is_after_numkeys(args_info_json, json_index):
