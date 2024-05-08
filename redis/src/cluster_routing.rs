@@ -379,19 +379,28 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"SCRIPT EXISTS"
         | b"SCRIPT KILL"
         | b"WAIT"
-        | b"RANDOMKEY" => RouteBy::AllPrimaries,
+        | b"RANDOMKEY"
+        | b"WAITAOF" => RouteBy::AllPrimaries,
 
         b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" => RouteBy::MultiShardNoValues,
         b"MSET" => RouteBy::MultiShardWithValues,
 
         // TODO - special handling - b"SCAN"
-        b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" | b"MOVE" | b"BITOP" => {
+        b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" => {
             RouteBy::Undefined
         }
 
-        b"EVALSHA" | b"EVAL" | b"BLMPOP" | b"BZMPOP" => RouteBy::ThirdArgAfterKeyCount,
+        b"BLMPOP"
+        | b"BZMPOP"
+        | b"EVAL"
+        | b"EVALSHA"
+        | b"EVALSHA_RO"
+        | b"EVAL_RO"
+        | b"FCALL"
+        | b"FCALL_RO" => RouteBy::ThirdArgAfterKeyCount,
 
-        b"MEMORY USAGE"
+        b"BITOP"
+        | b"MEMORY USAGE"
         | b"PFDEBUG"
         | b"XGROUP CREATE"
         | b"XGROUP CREATECONSUMER"
@@ -474,8 +483,7 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"TFUNCTION DELETE"
         | b"TFUNCTION LIST"
         | b"TFUNCTION LOAD"
-        | b"TIME"
-        | b"WAITAOF" => RouteBy::Random,
+        | b"TIME" => RouteBy::Random,
 
         b"CLUSTER ADDSLOTS"
         | b"CLUSTER COUNTKEYSINSLOT"
