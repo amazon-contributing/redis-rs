@@ -112,7 +112,9 @@ def main():
             raise Exception(f"Encountered json with an empty command name in file '{filename}'")
 
         json_key_index, is_key_optional = get_first_key_info(command_args)
-        if is_key_optional:
+        # cluster_routing.rs can handle optional keys if a keycount of 0 is provided, otherwise the command should
+        # fall under the "Uncategorized" section to indicate it will need to be manually inspected
+        if is_key_optional and not is_after_numkeys(command_args, json_key_index):
             uncategorized.add_command(command_name)
             continue
 
