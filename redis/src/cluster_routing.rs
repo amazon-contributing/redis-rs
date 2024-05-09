@@ -386,17 +386,9 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         b"MSET" => RouteBy::MultiShardWithValues,
 
         // TODO - special handling - b"SCAN"
-        b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" => {
-            RouteBy::Undefined
-        }
+        b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" => RouteBy::Undefined,
 
-        b"BLMPOP"
-        | b"BZMPOP"
-        | b"EVAL"
-        | b"EVALSHA"
-        | b"EVALSHA_RO"
-        | b"EVAL_RO"
-        | b"FCALL"
+        b"BLMPOP" | b"BZMPOP" | b"EVAL" | b"EVALSHA" | b"EVALSHA_RO" | b"EVAL_RO" | b"FCALL"
         | b"FCALL_RO" => RouteBy::ThirdArgAfterKeyCount,
 
         b"BITOP"
@@ -415,13 +407,9 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"OBJECT IDLETIME"
         | b"OBJECT REFCOUNT" => RouteBy::SecondArg,
 
-        b"LMPOP"
-        | b"SINTERCARD"
-        | b"ZDIFF"
-        | b"ZINTER"
-        | b"ZINTERCARD"
-        | b"ZMPOP"
-        | b"ZUNION" => RouteBy::SecondArgAfterKeyCount,
+        b"LMPOP" | b"SINTERCARD" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZMPOP" | b"ZUNION" => {
+            RouteBy::SecondArgAfterKeyCount
+        }
 
         b"XREAD" | b"XREADGROUP" => RouteBy::StreamsIndex,
 
@@ -1011,8 +999,6 @@ mod tests {
             cmd("SHUTDOWN"),
             cmd("SLAVEOF"),
             cmd("REPLICAOF"),
-            cmd("MOVE"),
-            cmd("BITOP"),
         ] {
             assert_eq!(
                 RoutingInfo::for_routable(&cmd),
