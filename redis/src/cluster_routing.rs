@@ -309,8 +309,8 @@ impl ResponsePolicy {
             b"ACL SETUSER" | b"ACL DELUSER" | b"ACL SAVE" | b"CLIENT SETNAME"
             | b"CLIENT SETINFO" | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE"
             | b"FLUSHALL" | b"FLUSHDB" | b"FUNCTION DELETE" | b"FUNCTION FLUSH"
-            | b"FUNCTION LOAD" | b"FUNCTION LIST" | b"FUNCTION RESTORE" | b"MEMORY PURGE"
-            | b"MSET" | b"PING" | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SLOWLOG RESET" => {
+            | b"FUNCTION LOAD" | b"FUNCTION RESTORE" | b"MEMORY PURGE" | b"MSET" | b"PING"
+            | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SLOWLOG RESET" => {
                 Some(ResponsePolicy::AllSucceeded)
             }
 
@@ -367,7 +367,6 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"FUNCTION FLUSH"
         | b"FUNCTION KILL"
         | b"FUNCTION LOAD"
-        | b"FUNCTION LIST"
         | b"FUNCTION RESTORE"
         | b"FUNCTION STATS"
         | b"INFO"
@@ -454,6 +453,7 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"CONFIG GET"
         | b"DEBUG"
         | b"ECHO"
+        | b"FUNTION LIST"
         | b"LASTSAVE"
         | b"LOLWUT"
         | b"MODULE LIST"
