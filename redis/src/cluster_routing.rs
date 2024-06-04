@@ -319,7 +319,7 @@ impl ResponsePolicy {
             b"FUNCTION KILL" | b"SCRIPT KILL" => Some(ResponsePolicy::OneSucceeded),
 
             // This isn't based on response_tips, but on the discussion here - https://github.com/redis/redis/issues/12410
-            b"RANDOMKEY" => Some(ResponsePolicy::OneSucceededNonEmpty),
+            b"RANDOMKEY" => Some(ResponsePolicy::OneSucceeded),
 
             b"LATENCY GRAPH" | b"LATENCY HISTOGRAM" | b"LATENCY HISTORY" | b"LATENCY DOCTOR"
             | b"LATENCY LATEST" => Some(ResponsePolicy::Special),
