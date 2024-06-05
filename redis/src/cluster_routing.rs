@@ -612,7 +612,12 @@ pub fn is_readonly_cmd(cmd: &[u8]) -> bool {
             | b"EVAL_RO"
             | b"EXISTS"
             | b"EXPIRETIME"
+            | b"FCALL" // FCALL on a RO function is a RO operation
             | b"FCALL_RO"
+            | b"FUNCTION DUMP"
+            | b"FUNCTION KILL"
+            | b"FUNCTION LIST"
+            | b"FUNCTION STATS"
             | b"GEODIST"
             | b"GEOHASH"
             | b"GEOPOS"
