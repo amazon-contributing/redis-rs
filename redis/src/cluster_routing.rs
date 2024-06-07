@@ -378,6 +378,7 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"PING"
         | b"SCRIPT EXISTS"
         | b"SCRIPT KILL"
+        | b"UNWATCH"
         | b"WAIT"
         | b"RANDOMKEY"
         | b"WAITAOF" => RouteBy::AllPrimaries,
