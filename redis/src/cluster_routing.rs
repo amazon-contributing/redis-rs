@@ -608,8 +608,10 @@ pub fn is_readonly_cmd(cmd: &[u8]) -> bool {
             | b"BITPOS"
             | b"DBSIZE"
             | b"DUMP"
-            | b"EVALSHA_RO"
+            | b"EVAL" // EVAL on a RO script is a RO operation
             | b"EVAL_RO"
+            | b"EVALSHA" // same with EVALSHA
+            | b"EVALSHA_RO"
             | b"EXISTS"
             | b"EXPIRETIME"
             | b"FCALL" // FCALL on a RO function is a RO operation
@@ -656,6 +658,11 @@ pub fn is_readonly_cmd(cmd: &[u8]) -> bool {
             | b"RANDOMKEY"
             | b"SCAN"
             | b"SCARD"
+            | b"SCRIPT DEBUG"
+            | b"SCRIPT EXISTS"
+            | b"SCRIPT FLUSH"
+            | b"SCRIPT KILL"
+            | b"SCRIPT LOAD"
             | b"SDIFF"
             | b"SINTER"
             | b"SINTERCARD"
