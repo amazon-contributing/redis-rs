@@ -1768,8 +1768,9 @@ mod cluster_async {
     }
 
     #[test]
-    fn test_async_cluster_fan_out_and_return_one_succeeded_ignoring_empty_values() {
-        let name = "test_async_cluster_fan_out_and_return_one_succeeded_ignoring_empty_values";
+    fn test_async_cluster_one_succeeded_non_empty_return_value_ignoring_nil_and_err_responses() {
+        let name =
+            "test_async_cluster_fan_out_and_return_one_succeeded_ignoring_nil_and_err_responses";
         let cmd = cmd("RANDOMKEY");
         let MockEnv {
             runtime,
@@ -1785,6 +1786,11 @@ mod cluster_async {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
                 if port == 6381 {
                     return Err(Ok(Value::BulkString("foo".as_bytes().to_vec())));
+                } else if port == 6380 {
+                    return Err(Err(RedisError::from((
+                        redis::ErrorKind::ResponseError,
+                        "ERROR",
+                    ))));
                 }
                 Err(Ok(Value::Nil))
             },
@@ -1794,6 +1800,67 @@ mod cluster_async {
             .block_on(cmd.query_async::<_, String>(&mut connection))
             .unwrap();
         assert_eq!(result, "foo", "{result:?}");
+    }
+
+    #[test]
+    fn test_async_cluster_one_succeeded_non_empty_return_nil_ignoring_err_responses() {
+        let name = "test_async_cluster_fan_out_and_return_nil_ignoring_err_responses";
+        let cmd = cmd("RANDOMKEY");
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(0)
+                .read_from_replicas(),
+            name,
+            move |received_cmd: &[u8], port| {
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                if port == 6381 {
+                    return Err(Ok(Value::Nil));
+                }
+                Err(Err(RedisError::from((
+                    redis::ErrorKind::ResponseError,
+                    "ERROR",
+                ))))
+            },
+        );
+
+        let result = runtime
+            .block_on(cmd.query_async::<_, Value>(&mut connection))
+            .unwrap();
+        assert_eq!(result, Value::Nil, "{result:?}");
+    }
+
+    #[test]
+    fn test_async_cluster_one_succeeded_non_empty_return_err_if_all_responses_are_errs() {
+        let name = "test_async_cluster_fan_out_and_return_err_if_all_responses_are_errs";
+        let cmd = cmd("RANDOMKEY");
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(0)
+                .read_from_replicas(),
+            name,
+            move |received_cmd: &[u8], _port| {
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                Err(Err(RedisError::from((
+                    redis::ErrorKind::ResponseError,
+                    "ERROR",
+                ))))
+            },
+        );
+
+        let result = runtime
+            .block_on(cmd.query_async::<_, Value>(&mut connection))
+            .unwrap_err();
+        assert_eq!(result.kind(), ErrorKind::ResponseError);
     }
 
     #[test]

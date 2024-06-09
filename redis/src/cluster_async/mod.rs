@@ -58,6 +58,7 @@ use crate::{
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
 };
+use futures::stream::{FuturesUnordered, StreamExt};
 use std::time::Duration;
 
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
@@ -867,17 +868,34 @@ where
             .await
             .map(|(result, _)| result),
             Some(ResponsePolicy::OneSucceededNonEmpty) => {
-                future::select_ok(receivers.into_iter().map(|(_, receiver)| {
-                    Box::pin(async move {
-                        let result = convert_result(receiver.await)?;
-                        match result {
-                            Value::Nil => Err((ErrorKind::ResponseError, "no value found").into()),
-                            _ => Ok(result),
-                        }
-                    })
-                }))
-                .await
-                .map(|(result, _)| result)
+                // Try to get the first result that isn't nil or an error. If no such response is found,
+                // return nil if at least one of the servers returned nil; otherwise, return the last received error.
+                let mut futures = receivers
+                    .into_iter()
+                    .map(get_receiver)
+                    .collect::<FuturesUnordered<_>>();
+
+                let mut nil_found = false;
+                let mut last_err = None;
+                while let Some(result) = futures.next().await {
+                    match result {
+                        Ok(Value::Nil) => nil_found = true,
+                        Ok(val) => return Ok(val),
+                        Err(e) => last_err = Some(e),
+                    }
+                }
+
+                if nil_found {
+                    Ok(Value::Nil)
+                } else {
+                    Err(last_err.unwrap_or_else(|| {
+                        (
+                            ErrorKind::ClusterConnectionNotFound,
+                            "Couldn't find any connection",
+                        )
+                            .into()
+                    }))
+                }
             }
             Some(ResponsePolicy::Aggregate(op)) => {
                 future::try_join_all(receivers.into_iter().map(get_receiver))
