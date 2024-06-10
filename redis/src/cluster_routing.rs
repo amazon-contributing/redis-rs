@@ -608,13 +608,10 @@ pub fn is_readonly_cmd(cmd: &[u8]) -> bool {
             | b"BITPOS"
             | b"DBSIZE"
             | b"DUMP"
-            | b"EVAL" // EVAL on a RO script is a RO operation
             | b"EVAL_RO"
-            | b"EVALSHA" // same with EVALSHA
             | b"EVALSHA_RO"
             | b"EXISTS"
             | b"EXPIRETIME"
-            | b"FCALL" // FCALL on a RO function is a RO operation
             | b"FCALL_RO"
             | b"FUNCTION DUMP"
             | b"FUNCTION KILL"
