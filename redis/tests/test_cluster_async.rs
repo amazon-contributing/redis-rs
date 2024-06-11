@@ -1803,8 +1803,8 @@ mod cluster_async {
     }
 
     #[test]
-    fn test_async_cluster_one_succeeded_non_empty_return_nil_ignoring_err_responses() {
-        let name = "test_async_cluster_fan_out_and_return_nil_ignoring_err_responses";
+    fn test_async_cluster_one_succeeded_non_empty_return_err_if_all_responses_are_nil_and_errors() {
+        let name = "test_async_cluster_one_succeeded_non_empty_return_err_if_all_responses_are_nil_and_errors";
         let cmd = cmd("RANDOMKEY");
         let MockEnv {
             runtime,
@@ -1827,16 +1827,15 @@ mod cluster_async {
                 ))))
             },
         );
-
         let result = runtime
             .block_on(cmd.query_async::<_, Value>(&mut connection))
-            .unwrap();
-        assert_eq!(result, Value::Nil, "{result:?}");
+            .unwrap_err();
+        assert_eq!(result.kind(), ErrorKind::ResponseError);
     }
 
     #[test]
-    fn test_async_cluster_one_succeeded_non_empty_return_err_if_all_responses_are_errs() {
-        let name = "test_async_cluster_fan_out_and_return_err_if_all_responses_are_errs";
+    fn test_async_cluster_one_succeeded_non_empty_return_nil_if_all_responses_are_nil() {
+        let name = "test_async_cluster_one_succeeded_non_empty_return_nil_if_all_responses_are_nil";
         let cmd = cmd("RANDOMKEY");
         let MockEnv {
             runtime,
@@ -1850,17 +1849,14 @@ mod cluster_async {
             name,
             move |received_cmd: &[u8], _port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
-                Err(Err(RedisError::from((
-                    redis::ErrorKind::ResponseError,
-                    "ERROR",
-                ))))
+                Err(Ok(Value::Nil))
             },
         );
 
         let result = runtime
             .block_on(cmd.query_async::<_, Value>(&mut connection))
-            .unwrap_err();
-        assert_eq!(result.kind(), ErrorKind::ResponseError);
+            .unwrap();
+        assert_eq!(result, Value::Nil, "{result:?}");
     }
 
     #[test]

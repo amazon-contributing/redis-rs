@@ -868,24 +868,28 @@ where
             .await
             .map(|(result, _)| result),
             Some(ResponsePolicy::OneSucceededNonEmpty) => {
-                // Try to get the first result that isn't nil or an error. If no such response is found,
-                // return nil if at least one of the servers returned nil; otherwise, return the last received error.
+                // Attempt to return the first result that isn't `Nil` or an error.
+                // If no such response is found and all servers returned `Nil`, it indicates that all shards are empty, so return `Nil`.
+                // If we received only errors, return the last received error.
+                // If we received a mix of errors and `Nil`s, we can't determine if all shards are empty,
+                // thus we return the last received error instead of `Nil`.
+                let num_of_results: usize = receivers.len();
                 let mut futures = receivers
                     .into_iter()
                     .map(get_receiver)
                     .collect::<FuturesUnordered<_>>();
-
-                let mut nil_found = false;
+                let mut nil_counter = 0;
                 let mut last_err = None;
                 while let Some(result) = futures.next().await {
                     match result {
-                        Ok(Value::Nil) => nil_found = true,
+                        Ok(Value::Nil) => nil_counter += 1,
                         Ok(val) => return Ok(val),
                         Err(e) => last_err = Some(e),
                     }
                 }
 
-                if nil_found {
+                if nil_counter == num_of_results {
+                    // All received results are `Nil`
                     Ok(Value::Nil)
                 } else {
                     Err(last_err.unwrap_or_else(|| {
