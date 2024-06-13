@@ -1783,7 +1783,9 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                let ports = vec![6379, 6380, 6381];
+                let slots_config_vec = generate_topology_view(&ports, 1000, true);
+                respond_startup_with_config(name, received_cmd, Some(slots_config_vec), false)?;
                 if port == 6381 {
                     return Err(Ok(Value::BulkString("foo".as_bytes().to_vec())));
                 } else if port == 6380 {
