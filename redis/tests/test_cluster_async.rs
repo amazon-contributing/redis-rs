@@ -1768,9 +1768,10 @@ mod cluster_async {
     }
 
     #[test]
-    fn test_async_cluster_one_succeeded_non_empty_return_value_ignoring_nil_and_err_responses() {
+    fn test_async_cluster_first_succeeded_non_empty_or_all_empty_return_value_ignoring_nil_and_err_resps(
+    ) {
         let name =
-            "test_async_cluster_fan_out_and_return_one_succeeded_ignoring_nil_and_err_responses";
+            "test_async_cluster_first_succeeded_non_empty_or_all_empty_return_value_ignoring_nil_and_err_resps";
         let cmd = cmd("RANDOMKEY");
         let MockEnv {
             runtime,
@@ -1786,9 +1787,9 @@ mod cluster_async {
                 let ports = vec![6379, 6380, 6381];
                 let slots_config_vec = generate_topology_view(&ports, 1000, true);
                 respond_startup_with_config(name, received_cmd, Some(slots_config_vec), false)?;
-                if port == 6381 {
+                if port == 6380 {
                     return Err(Ok(Value::BulkString("foo".as_bytes().to_vec())));
-                } else if port == 6380 {
+                } else if port == 6381 {
                     return Err(Err(RedisError::from((
                         redis::ErrorKind::ResponseError,
                         "ERROR",
@@ -1805,8 +1806,10 @@ mod cluster_async {
     }
 
     #[test]
-    fn test_async_cluster_one_succeeded_non_empty_return_err_if_all_responses_are_nil_and_errors() {
-        let name = "test_async_cluster_one_succeeded_non_empty_return_err_if_all_responses_are_nil_and_errors";
+    fn test_async_cluster_first_succeeded_non_empty_or_all_empty_return_err_if_all_resps_are_nil_and_errors(
+    ) {
+        let name =
+            "test_async_cluster_first_succeeded_non_empty_or_all_empty_return_err_if_all_resps_are_nil_and_errors";
         let cmd = cmd("RANDOMKEY");
         let MockEnv {
             runtime,
@@ -1819,8 +1822,8 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
-                if port == 6381 {
+                respond_startup_with_config(name, received_cmd, None, false)?;
+                if port == 6380 {
                     return Err(Ok(Value::Nil));
                 }
                 Err(Err(RedisError::from((
@@ -1836,8 +1839,9 @@ mod cluster_async {
     }
 
     #[test]
-    fn test_async_cluster_one_succeeded_non_empty_return_nil_if_all_responses_are_nil() {
-        let name = "test_async_cluster_one_succeeded_non_empty_return_nil_if_all_responses_are_nil";
+    fn test_async_cluster_first_succeeded_non_empty_or_all_empty_return_nil_if_all_resp_nil() {
+        let name =
+            "test_async_cluster_first_succeeded_non_empty_or_all_empty_return_nil_if_all_resp_nil";
         let cmd = cmd("RANDOMKEY");
         let MockEnv {
             runtime,
@@ -1850,7 +1854,7 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], _port| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                respond_startup_with_config(name, received_cmd, None, false)?;
                 Err(Ok(Value::Nil))
             },
         );

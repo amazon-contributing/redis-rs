@@ -867,7 +867,7 @@ where
             )
             .await
             .map(|(result, _)| result),
-            Some(ResponsePolicy::OneSucceededNonEmpty) => {
+            Some(ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty) => {
                 // Attempt to return the first result that isn't `Nil` or an error.
                 // If no such response is found and all servers returned `Nil`, it indicates that all shards are empty, so return `Nil`.
                 // If we received only errors, return the last received error.
