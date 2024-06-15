@@ -364,6 +364,7 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"FLUSHALL"
         | b"FLUSHDB"
         | b"FUNCTION DELETE"
+        | b"FUNCTION DUMP"
         | b"FUNCTION FLUSH"
         | b"FUNCTION KILL"
         | b"FUNCTION LOAD"
