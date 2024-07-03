@@ -795,11 +795,7 @@ impl<C> Future for Request<C> {
                     }
                 };
 
-                warn!(
-                    "Request error `{}` on node `{:?}` was caught internally. 
-                    The client will handle it based on the error and its handling policy.",
-                    err, address
-                );
+                warn!("Received request error {} on node {:?}.", err, address);
 
                 match err.retry_method() {
                     crate::types::RetryMethod::AskRedirect => {
