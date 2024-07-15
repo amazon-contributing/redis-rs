@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::io::{self, Write};
 use std::net::{self, SocketAddr, TcpStream, ToSocketAddrs};
@@ -11,13 +11,11 @@ use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, PushKind, RedisError, RedisResult, ToRedisArgs,
-    Value,
+    from_redis_value, ErrorKind, FromRedisValue, HashMap, PushKind, RedisError, RedisResult,
+    ToRedisArgs, Value,
 };
 use crate::{from_owned_redis_value, ProtocolVersion};
 
-#[cfg(unix)]
-use crate::types::HashMap;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::vec::IntoIter;
@@ -215,6 +213,33 @@ pub struct ConnectionInfo {
     pub redis: RedisConnectionInfo,
 }
 
+/// Types of pubsub subscriptions
+/// See <https://valkey.io/docs/topics/pubsub> for more details
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
+pub enum PubSubSubscriptionKind {
+    /// Exact channel name.
+    /// Receives messages which are published to a specific channel using PUBLISH command.
+    Exact = 0,
+    /// Pattern-based channel name.
+    /// Receives messages which are published to channels matched by glob pattern using PUBLISH command.
+    Pattern = 1,
+    /// Sharded pubsub mode.
+    /// Receives messages which are published to a specific channel using SPUBLISH command.
+    Sharded = 2,
+}
+
+impl From<PubSubSubscriptionKind> for usize {
+    fn from(val: PubSubSubscriptionKind) -> Self {
+        val as usize
+    }
+}
+
+/// Type for pubsub channels/patterns
+pub type PubSubChannelOrPattern = Vec<u8>;
+
+/// Type for pubsub channels/patterns
+pub type PubSubSubscriptionInfo = HashMap<PubSubSubscriptionKind, HashSet<PubSubChannelOrPattern>>;
+
 /// Redis specific/connection independent information used to establish a connection to redis.
 #[derive(Clone, Debug, Default)]
 pub struct RedisConnectionInfo {
@@ -226,8 +251,10 @@ pub struct RedisConnectionInfo {
     pub password: Option<String>,
     /// Version of the protocol to use.
     pub protocol: ProtocolVersion,
-    /// Optionally a pass a client name that should be used for connection
+    /// Optionally a client name that should be used for connection
     pub client_name: Option<String>,
+    /// Optionally a pubsub subscriptions that should be used for connection
+    pub pubsub_subscriptions: Option<PubSubSubscriptionInfo>,
 }
 
 impl FromStr for ConnectionInfo {
@@ -394,6 +421,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 _ => ProtocolVersion::RESP2,
             },
             client_name: None,
+            pubsub_subscriptions: None,
         },
     })
 }
@@ -426,6 +454,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 _ => ProtocolVersion::RESP2,
             },
             client_name: None,
+            pubsub_subscriptions: None,
         },
     })
 }
@@ -1464,7 +1493,7 @@ where
 /// ```rust,no_run
 /// # fn do_something() -> redis::RedisResult<()> {
 /// let client = redis::Client::open("redis://127.0.0.1/")?;
-/// let mut con = client.get_connection()?;
+/// let mut con = client.get_connection(None)?;
 /// let mut pubsub = con.as_pubsub();
 /// pubsub.subscribe("channel_1")?;
 /// pubsub.subscribe("channel_2")?;
@@ -1694,7 +1723,7 @@ impl Msg {
 /// use redis::Commands;
 /// # fn do_something() -> redis::RedisResult<()> {
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// # let mut con = client.get_connection().unwrap();
+/// # let mut con = client.get_connection(None).unwrap();
 /// let key = "the_key";
 /// let (new_val,) : (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
 ///     let old_val : isize = con.get(key)?;
@@ -1897,6 +1926,7 @@ mod tests {
                         password: None,
                         protocol: ProtocolVersion::RESP2,
                         client_name: None,
+                        pubsub_subscriptions: None,
                     },
                 },
             ),

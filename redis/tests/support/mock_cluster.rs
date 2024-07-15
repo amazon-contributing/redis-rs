@@ -1,6 +1,6 @@
 use redis::{
     cluster::{self, ClusterClient, ClusterClientBuilder},
-    ErrorKind, FromRedisValue, RedisError,
+    ErrorKind, FromRedisValue, PushInfo, RedisError,
 };
 
 use std::{
@@ -17,6 +17,8 @@ use {
     once_cell::sync::Lazy,
     redis::{IntoConnectionInfo, RedisResult, Value},
 };
+
+use tokio::sync::mpsc;
 
 #[cfg(feature = "cluster-async")]
 use redis::{aio, cluster_async, RedisFuture};
@@ -132,6 +134,7 @@ impl cluster_async::Connect for MockConnection {
         _response_timeout: Duration,
         _connection_timeout: Duration,
         _socket_addr: Option<SocketAddr>,
+        _push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisFuture<'a, (Self, Option<IpAddr>)>
     where
         T: IntoConnectionInfo + Send + 'a,
@@ -264,22 +267,7 @@ pub fn respond_startup_with_replica(name: &str, cmd: &[u8]) -> Result<(), RedisR
 }
 
 pub fn respond_startup_two_nodes(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
-    respond_startup_with_replica_using_config(
-        name,
-        cmd,
-        Some(vec![
-            MockSlotRange {
-                primary_port: 6379,
-                replica_ports: vec![],
-                slot_range: (0..8191),
-            },
-            MockSlotRange {
-                primary_port: 6380,
-                replica_ports: vec![],
-                slot_range: (8192..16383),
-            },
-        ]),
-    )
+    respond_startup_with_config(name, cmd, None, false)
 }
 
 pub fn create_topology_from_config(name: &str, slots_config: Vec<MockSlotRange>) -> Value {
@@ -311,18 +299,43 @@ pub fn respond_startup_with_replica_using_config(
     cmd: &[u8],
     slots_config: Option<Vec<MockSlotRange>>,
 ) -> Result<(), RedisResult<Value>> {
-    let slots_config = slots_config.unwrap_or(vec![
-        MockSlotRange {
-            primary_port: 6379,
-            replica_ports: vec![6380],
-            slot_range: (0..8191),
-        },
-        MockSlotRange {
-            primary_port: 6381,
-            replica_ports: vec![6382],
-            slot_range: (8192..16383),
-        },
-    ]);
+    respond_startup_with_config(name, cmd, slots_config, true)
+}
+
+/// If the configuration isn't provided, a configuration with two primary nodes, with or without replicas, will be used.
+pub fn respond_startup_with_config(
+    name: &str,
+    cmd: &[u8],
+    slots_config: Option<Vec<MockSlotRange>>,
+    with_replicas: bool,
+) -> Result<(), RedisResult<Value>> {
+    let slots_config = slots_config.unwrap_or(if with_replicas {
+        vec![
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: vec![6380],
+                slot_range: (0..8191),
+            },
+            MockSlotRange {
+                primary_port: 6381,
+                replica_ports: vec![6382],
+                slot_range: (8192..16383),
+            },
+        ]
+    } else {
+        vec![
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: vec![],
+                slot_range: (0..8191),
+            },
+            MockSlotRange {
+                primary_port: 6380,
+                replica_ports: vec![],
+                slot_range: (8192..16383),
+            },
+        ]
+    });
     if contains_slice(cmd, b"PING") || contains_slice(cmd, b"SETNAME") {
         Err(Ok(Value::SimpleString("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
@@ -454,7 +467,7 @@ impl MockEnv {
             Arc::new(move |cmd, port| handler(cmd, port)),
         );
         let client = client_builder.build().unwrap();
-        let connection = client.get_generic_connection().unwrap();
+        let connection = client.get_generic_connection(None).unwrap();
         #[cfg(feature = "cluster-async")]
         let async_connection = runtime
             .block_on(client.get_async_generic_connection())

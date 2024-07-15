@@ -36,8 +36,8 @@ pub enum AggregateOp {
 pub enum ResponsePolicy {
     /// Wait for one request to succeed and return its results. Return error if all requests fail.
     OneSucceeded,
-    /// Wait for one request to succeed with a non-empty value. Return error if all requests fail or return `Nil`.
-    OneSucceededNonEmpty,
+    /// Returns the first succeeded non-empty result; if all results are empty, returns `Nil`; otherwise, returns the last received error.
+    FirstSucceededNonEmptyOrAllEmpty,
     /// Waits for all requests to succeed, and the returns one of the successes. Returns the error on the first received error.
     AllSucceeded,
     /// Aggregate success results according to a logical bitwise operator. Return error on any failed request or on a response that doesn't conform to 0 or 1.
@@ -64,7 +64,7 @@ pub enum RoutingInfo {
 pub enum SingleNodeRoutingInfo {
     /// Route to any node at random
     Random,
-    /// Route to the node that matches the [route]
+    /// Route to the node that matches the [Route]
     SpecificNode(Route),
     /// Route to the node with the given address.
     ByAddress {
@@ -210,7 +210,7 @@ pub fn combine_array_results(values: Vec<Value>) -> RedisResult<Value> {
 /// the results in the final array.
 pub(crate) fn combine_and_sort_array_results<'a>(
     values: Vec<Value>,
-    sorting_order: impl Iterator<Item = &'a Vec<usize>> + ExactSizeIterator,
+    sorting_order: impl ExactSizeIterator<Item = &'a Vec<usize>>,
 ) -> RedisResult<Value> {
     let mut results = Vec::new();
     results.resize(
@@ -310,7 +310,7 @@ impl ResponsePolicy {
             | b"CLIENT SETINFO" | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE"
             | b"FLUSHALL" | b"FLUSHDB" | b"FUNCTION DELETE" | b"FUNCTION FLUSH"
             | b"FUNCTION LOAD" | b"FUNCTION RESTORE" | b"MEMORY PURGE" | b"MSET" | b"PING"
-            | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SLOWLOG RESET" => {
+            | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SLOWLOG RESET" | b"UNWATCH" | b"WATCH" => {
                 Some(ResponsePolicy::AllSucceeded)
             }
 
@@ -319,7 +319,7 @@ impl ResponsePolicy {
             b"FUNCTION KILL" | b"SCRIPT KILL" => Some(ResponsePolicy::OneSucceeded),
 
             // This isn't based on response_tips, but on the discussion here - https://github.com/redis/redis/issues/12410
-            b"RANDOMKEY" => Some(ResponsePolicy::OneSucceededNonEmpty),
+            b"RANDOMKEY" => Some(ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty),
 
             b"LATENCY GRAPH" | b"LATENCY HISTOGRAM" | b"LATENCY HISTORY" | b"LATENCY DOCTOR"
             | b"LATENCY LATEST" => Some(ResponsePolicy::Special),
@@ -345,6 +345,7 @@ enum RouteBy {
     MultiShardWithValues,
     Random,
     SecondArg,
+    SecondArgAfterKeyCount,
     SecondArgSlot,
     StreamsIndex,
     ThirdArgAfterKeyCount,
@@ -377,27 +378,41 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"PING"
         | b"SCRIPT EXISTS"
         | b"SCRIPT KILL"
+        | b"UNWATCH"
         | b"WAIT"
-        | b"RANDOMKEY" => RouteBy::AllPrimaries,
+        | b"RANDOMKEY"
+        | b"WAITAOF" => RouteBy::AllPrimaries,
 
-        b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" => RouteBy::MultiShardNoValues,
+        b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" | b"WATCH" => {
+            RouteBy::MultiShardNoValues
+        }
         b"MSET" => RouteBy::MultiShardWithValues,
 
         // TODO - special handling - b"SCAN"
-        b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" | b"MOVE" | b"BITOP" => {
-            RouteBy::Undefined
-        }
+        b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" => RouteBy::Undefined,
 
-        b"EVALSHA" | b"EVAL" => RouteBy::ThirdArgAfterKeyCount,
+        b"BLMPOP" | b"BZMPOP" | b"EVAL" | b"EVALSHA" | b"EVALSHA_RO" | b"EVAL_RO" | b"FCALL"
+        | b"FCALL_RO" => RouteBy::ThirdArgAfterKeyCount,
 
-        b"XGROUP CREATE"
+        b"BITOP"
+        | b"MEMORY USAGE"
+        | b"PFDEBUG"
+        | b"XGROUP CREATE"
         | b"XGROUP CREATECONSUMER"
         | b"XGROUP DELCONSUMER"
         | b"XGROUP DESTROY"
         | b"XGROUP SETID"
         | b"XINFO CONSUMERS"
         | b"XINFO GROUPS"
-        | b"XINFO STREAM" => RouteBy::SecondArg,
+        | b"XINFO STREAM"
+        | b"OBJECT ENCODING"
+        | b"OBJECT FREQ"
+        | b"OBJECT IDLETIME"
+        | b"OBJECT REFCOUNT" => RouteBy::SecondArg,
+
+        b"LMPOP" | b"SINTERCARD" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZMPOP" | b"ZUNION" => {
+            RouteBy::SecondArgAfterKeyCount
+        }
 
         b"XREAD" | b"XREADGROUP" => RouteBy::StreamsIndex,
 
@@ -441,7 +456,9 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"CONFIG GET"
         | b"DEBUG"
         | b"ECHO"
+        | b"FUNCTION LIST"
         | b"LASTSAVE"
+        | b"LOLWUT"
         | b"MODULE LIST"
         | b"MODULE LOAD"
         | b"MODULE LOADEX"
@@ -458,10 +475,10 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"TFUNCTION DELETE"
         | b"TFUNCTION LIST"
         | b"TFUNCTION LOAD"
-        | b"TIME"
-        | b"WAITAOF" => RouteBy::Random,
+        | b"TIME" => RouteBy::Random,
 
-        b"CLUSTER COUNTKEYSINSLOT"
+        b"CLUSTER ADDSLOTS"
+        | b"CLUSTER COUNTKEYSINSLOT"
         | b"CLUSTER DELSLOTS"
         | b"CLUSTER DELSLOTSRANGE"
         | b"CLUSTER GETKEYSINSLOT"
@@ -472,9 +489,26 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
 }
 
 impl RoutingInfo {
-    /// Returns true if the `cmd`` should be routed to all nodes.
+    /// Returns true if the `cmd` should be routed to all nodes.
     pub fn is_all_nodes(cmd: &[u8]) -> bool {
         matches!(base_routing(cmd), RouteBy::AllNodes)
+    }
+
+    /// Returns true if the `cmd` is a key-based command.
+    pub fn is_key_based_cmd(cmd: &[u8]) -> bool {
+        match base_routing(cmd) {
+            RouteBy::FirstKey
+            | RouteBy::SecondArg
+            | RouteBy::SecondArgAfterKeyCount
+            | RouteBy::ThirdArgAfterKeyCount
+            | RouteBy::SecondArgSlot
+            | RouteBy::StreamsIndex
+            | RouteBy::MultiShardNoValues
+            | RouteBy::MultiShardWithValues => true,
+            RouteBy::AllNodes | RouteBy::AllPrimaries | RouteBy::Random | RouteBy::Undefined => {
+                false
+            }
+        }
     }
 
     /// Returns the routing info for `r`.
@@ -513,6 +547,18 @@ impl RoutingInfo {
             }
 
             RouteBy::SecondArg => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
+
+            RouteBy::SecondArgAfterKeyCount => {
+                let key_count = r
+                    .arg_idx(1)
+                    .and_then(|x| std::str::from_utf8(x).ok())
+                    .and_then(|x| x.parse::<u64>().ok())?;
+                if key_count == 0 {
+                    Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                } else {
+                    r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key))
+                }
+            }
 
             RouteBy::StreamsIndex => {
                 let streams_position = r.position(b"STREAMS")?;
@@ -565,11 +611,15 @@ pub fn is_readonly_cmd(cmd: &[u8]) -> bool {
             | b"BITPOS"
             | b"DBSIZE"
             | b"DUMP"
-            | b"EVALSHA_RO"
             | b"EVAL_RO"
+            | b"EVALSHA_RO"
             | b"EXISTS"
             | b"EXPIRETIME"
             | b"FCALL_RO"
+            | b"FUNCTION DUMP"
+            | b"FUNCTION KILL"
+            | b"FUNCTION LIST"
+            | b"FUNCTION STATS"
             | b"GEODIST"
             | b"GEOHASH"
             | b"GEOPOS"
@@ -608,6 +658,11 @@ pub fn is_readonly_cmd(cmd: &[u8]) -> bool {
             | b"RANDOMKEY"
             | b"SCAN"
             | b"SCARD"
+            | b"SCRIPT DEBUG"
+            | b"SCRIPT EXISTS"
+            | b"SCRIPT FLUSH"
+            | b"SCRIPT KILL"
+            | b"SCRIPT LOAD"
             | b"SDIFF"
             | b"SINTER"
             | b"SINTERCARD"
@@ -957,8 +1012,6 @@ mod tests {
             cmd("SHUTDOWN"),
             cmd("SLAVEOF"),
             cmd("REPLICAOF"),
-            cmd("MOVE"),
-            cmd("BITOP"),
         ] {
             assert_eq!(
                 RoutingInfo::for_routable(&cmd),

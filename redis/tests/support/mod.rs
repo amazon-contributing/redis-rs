@@ -1,8 +1,5 @@
 #![allow(dead_code)]
 
-#[cfg(feature = "aio")]
-use futures::Future;
-use redis::{ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisConnectionInfo, Value};
 use std::path::Path;
 use std::{
     env, fs, io, net::SocketAddr, net::TcpListener, path::PathBuf, process, thread::sleep,
@@ -13,6 +10,10 @@ use std::{
     fs::File,
     io::{BufReader, Read},
 };
+
+#[cfg(feature = "aio")]
+use futures::Future;
+use redis::{ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisConnectionInfo, Value};
 
 #[cfg(feature = "tls-rustls")]
 use redis::{ClientTlsConfig, TlsCertificates};
@@ -142,8 +143,8 @@ pub enum Module {
 
 pub struct RedisServer {
     pub process: process::Child,
-    tempdir: tempfile::TempDir,
-    addr: redis::ConnectionAddr,
+    pub(crate) tempdir: tempfile::TempDir,
+    pub(crate) addr: redis::ConnectionAddr,
     pub(crate) tls_paths: Option<TlsFilePaths>,
 }
 
@@ -416,7 +417,7 @@ impl TestContext {
         let millisecond = Duration::from_millis(1);
         let mut retries = 0;
         loop {
-            match client.get_connection() {
+            match client.get_connection(None) {
                 Err(err) => {
                     if err.is_connection_refusal() {
                         sleep(millisecond);
@@ -511,12 +512,12 @@ impl TestContext {
     }
 
     pub fn connection(&self) -> redis::Connection {
-        self.client.get_connection().unwrap()
+        self.client.get_connection(None).unwrap()
     }
 
     #[cfg(feature = "aio")]
     pub async fn async_connection(&self) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
-        self.client.get_multiplexed_async_connection().await
+        self.client.get_multiplexed_async_connection(None).await
     }
 
     #[cfg(feature = "aio")]
@@ -528,7 +529,7 @@ impl TestContext {
     pub async fn async_connection_async_std(
         &self,
     ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
-        self.client.get_multiplexed_async_std_connection().await
+        self.client.get_multiplexed_async_std_connection(None).await
     }
 
     pub fn stop_server(&mut self) {
@@ -546,14 +547,14 @@ impl TestContext {
     pub async fn multiplexed_async_connection_tokio(
         &self,
     ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
-        self.client.get_multiplexed_tokio_connection().await
+        self.client.get_multiplexed_tokio_connection(None).await
     }
 
     #[cfg(feature = "async-std-comp")]
     pub async fn multiplexed_async_connection_async_std(
         &self,
     ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
-        self.client.get_multiplexed_async_std_connection().await
+        self.client.get_multiplexed_async_std_connection(None).await
     }
 
     pub fn get_version(&self) -> Version {

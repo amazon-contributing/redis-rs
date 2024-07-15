@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
+    push_manager::PushInfo,
     types::{RedisResult, Value},
 };
 #[cfg(feature = "aio")]
@@ -10,6 +11,7 @@ use std::net::IpAddr;
 use std::net::SocketAddr;
 #[cfg(feature = "aio")]
 use std::pin::Pin;
+use tokio::sync::mpsc;
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::{inner_build_with_tls, TlsCertificates};
@@ -34,7 +36,7 @@ pub struct Client {
 ///
 /// ```rust,no_run
 /// let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// let con = client.get_connection().unwrap();
+/// let con = client.get_connection(None).unwrap();
 /// ```
 impl Client {
     /// Connects to a redis server and returns a client.  This does not
@@ -51,7 +53,10 @@ impl Client {
     /// commands to the server.  This can fail with a variety of errors
     /// (like unreachable host) so it's important that you handle those
     /// errors.
-    pub fn get_connection(&self) -> RedisResult<Connection> {
+    pub fn get_connection(
+        &self,
+        _push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
+    ) -> RedisResult<Connection> {
         connect(&self.connection_info, None)
     }
 
@@ -81,7 +86,10 @@ impl Client {
         note = "aio::Connection is deprecated. Use client::get_multiplexed_async_connection instead."
     )]
     #[allow(deprecated)]
-    pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
+    pub async fn get_async_connection(
+        &self,
+        _push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
+    ) -> RedisResult<crate::aio::Connection> {
         let (con, _ip) = match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
             Runtime::Tokio => {
@@ -138,10 +146,12 @@ impl Client {
     )]
     pub async fn get_multiplexed_async_connection(
         &self,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
         self.get_multiplexed_async_connection_with_timeouts(
             std::time::Duration::MAX,
             std::time::Duration::MAX,
+            push_sender,
         )
         .await
     }
@@ -156,6 +166,7 @@ impl Client {
         &self,
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
         let result = match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
@@ -165,6 +176,7 @@ impl Client {
                     self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
                         response_timeout,
                         None,
+                        push_sender,
                     ),
                 )
                 .await
@@ -176,6 +188,7 @@ impl Client {
                     self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
                         response_timeout,
                         None,
+                        push_sender,
                     ),
                 )
                 .await
@@ -199,6 +212,7 @@ impl Client {
     )]
     pub async fn get_multiplexed_async_connection_and_ip(
         &self,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<(crate::aio::MultiplexedConnection, Option<IpAddr>)> {
         match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
@@ -206,6 +220,7 @@ impl Client {
                 self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
                     Duration::MAX,
                     None,
+                    push_sender,
                 )
                 .await
             }
@@ -214,6 +229,7 @@ impl Client {
                 self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
                     Duration::MAX,
                     None,
+                    push_sender,
                 )
                 .await
             }
@@ -230,6 +246,7 @@ impl Client {
         &self,
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
         let result = Runtime::locate()
             .timeout(
@@ -237,6 +254,7 @@ impl Client {
                 self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
                     response_timeout,
                     None,
+                    push_sender,
                 ),
             )
             .await;
@@ -256,10 +274,12 @@ impl Client {
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     pub async fn get_multiplexed_tokio_connection(
         &self,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
         self.get_multiplexed_tokio_connection_with_response_timeouts(
             std::time::Duration::MAX,
             std::time::Duration::MAX,
+            push_sender,
         )
         .await
     }
@@ -274,6 +294,7 @@ impl Client {
         &self,
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
         let result = Runtime::locate()
             .timeout(
@@ -281,6 +302,7 @@ impl Client {
                 self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
                     response_timeout,
                     None,
+                    push_sender,
                 ),
             )
             .await;
@@ -300,10 +322,12 @@ impl Client {
     #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
     pub async fn get_multiplexed_async_std_connection(
         &self,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
         self.get_multiplexed_async_std_connection_with_timeouts(
             std::time::Duration::MAX,
             std::time::Duration::MAX,
+            push_sender,
         )
         .await
     }
@@ -319,6 +343,7 @@ impl Client {
     pub async fn create_multiplexed_tokio_connection_with_response_timeout(
         &self,
         response_timeout: std::time::Duration,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<(
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
@@ -326,6 +351,7 @@ impl Client {
         self.create_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
             response_timeout,
             None,
+            push_sender,
         )
         .await
         .map(|(conn, driver, _ip)| (conn, driver))
@@ -340,13 +366,17 @@ impl Client {
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     pub async fn create_multiplexed_tokio_connection(
         &self,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<(
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
     )> {
-        self.create_multiplexed_tokio_connection_with_response_timeout(std::time::Duration::MAX)
-            .await
-            .map(|conn_res| (conn_res.0, conn_res.1))
+        self.create_multiplexed_tokio_connection_with_response_timeout(
+            std::time::Duration::MAX,
+            push_sender,
+        )
+        .await
+        .map(|conn_res| (conn_res.0, conn_res.1))
     }
 
     /// Returns an async multiplexed connection from the client and a future which must be polled
@@ -354,12 +384,13 @@ impl Client {
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
-    /// The multiplexer will return a timeout error on any request that takes longer then [response_timeout].
+    /// The multiplexer will return a timeout error on any request that takes longer then `response_timeout`.
     #[cfg(feature = "async-std-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
     pub async fn create_multiplexed_async_std_connection_with_response_timeout(
         &self,
         response_timeout: std::time::Duration,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<(
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
@@ -367,6 +398,7 @@ impl Client {
         self.create_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
             response_timeout,
             None,
+            push_sender,
         )
         .await
         .map(|(conn, driver, _ip)| (conn, driver))
@@ -381,12 +413,16 @@ impl Client {
     #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
     pub async fn create_multiplexed_async_std_connection(
         &self,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<(
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
     )> {
-        self.create_multiplexed_async_std_connection_with_response_timeout(std::time::Duration::MAX)
-            .await
+        self.create_multiplexed_async_std_connection_with_response_timeout(
+            std::time::Duration::MAX,
+            push_sender,
+        )
+        .await
     }
 
     /// Returns an async [`ConnectionManager`][connection-manager] from the client.
@@ -462,7 +498,7 @@ impl Client {
         factor: u64,
         number_of_retries: usize,
     ) -> RedisResult<crate::aio::ConnectionManager> {
-        self.get_tokio_connection_manager_with_backoff_and_timeouts(
+        self.get_connection_manager_with_backoff_and_timeouts(
             exponent_base,
             factor,
             number_of_retries,
@@ -491,7 +527,46 @@ impl Client {
     /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
     #[cfg(feature = "connection-manager")]
     #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
+    #[deprecated(note = "use get_connection_manager_with_backoff_and_timeouts instead")]
     pub async fn get_tokio_connection_manager_with_backoff_and_timeouts(
+        &self,
+        exponent_base: u64,
+        factor: u64,
+        number_of_retries: usize,
+        response_timeout: std::time::Duration,
+        connection_timeout: std::time::Duration,
+    ) -> RedisResult<crate::aio::ConnectionManager> {
+        crate::aio::ConnectionManager::new_with_backoff_and_timeouts(
+            self.clone(),
+            exponent_base,
+            factor,
+            number_of_retries,
+            response_timeout,
+            connection_timeout,
+        )
+        .await
+    }
+
+    /// Returns an async [`ConnectionManager`][connection-manager] from the client.
+    ///
+    /// The connection manager wraps a
+    /// [`MultiplexedConnection`][multiplexed-connection]. If a command to that
+    /// connection fails with a connection error, then a new connection is
+    /// established in the background and the error is returned to the caller.
+    ///
+    /// This means that on connection loss at least one command will fail, but
+    /// the connection will be re-established automatically if possible. Please
+    /// refer to the [`ConnectionManager`][connection-manager] docs for
+    /// detailed reconnecting behavior.
+    ///
+    /// A connection manager can be cloned, allowing requests to be be sent concurrently
+    /// on the same underlying connection (tcp/unix socket).
+    ///
+    /// [connection-manager]: aio/struct.ConnectionManager.html
+    /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
+    #[cfg(feature = "connection-manager")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
+    pub async fn get_connection_manager_with_backoff_and_timeouts(
         &self,
         exponent_base: u64,
         factor: u64,
@@ -548,12 +623,17 @@ impl Client {
         &self,
         response_timeout: std::time::Duration,
         socket_addr: Option<SocketAddr>,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<(crate::aio::MultiplexedConnection, Option<IpAddr>)>
     where
         T: crate::aio::RedisRuntime,
     {
         let (connection, driver, ip) = self
-            .create_multiplexed_async_connection_inner::<T>(response_timeout, socket_addr)
+            .create_multiplexed_async_connection_inner::<T>(
+                response_timeout,
+                socket_addr,
+                push_sender,
+            )
             .await?;
         T::spawn(driver);
         Ok((connection, ip))
@@ -563,6 +643,7 @@ impl Client {
         &self,
         response_timeout: std::time::Duration,
         socket_addr: Option<SocketAddr>,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<(
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
@@ -576,6 +657,7 @@ impl Client {
             &self.connection_info,
             con,
             response_timeout,
+            push_sender,
         )
         .await
         .map(|res| (res.0, res.1, ip))
@@ -660,7 +742,7 @@ impl Client {
     ///
     ///     println!(">>> connection info: {connection_info:?}");
     ///
-    ///     let mut con = client.get_async_connection().await?;
+    ///     let mut con = client.get_async_connection(None).await?;
     ///
     ///     con.set("key1", b"foo").await?;
     ///
@@ -694,7 +776,7 @@ impl Client {
     // TODO - do we want to type-erase pubsub using a trait, to allow us to replace it with a different implementation later?
     pub async fn get_async_pubsub(&self) -> RedisResult<crate::aio::PubSub> {
         #[allow(deprecated)]
-        self.get_async_connection()
+        self.get_async_connection(None)
             .await
             .map(|connection| connection.into_pubsub())
     }
@@ -704,7 +786,7 @@ impl Client {
     // TODO - do we want to type-erase monitor using a trait, to allow us to replace it with a different implementation later?
     pub async fn get_async_monitor(&self) -> RedisResult<crate::aio::Monitor> {
         #[allow(deprecated)]
-        self.get_async_connection()
+        self.get_async_connection(None)
             .await
             .map(|connection| connection.into_monitor())
     }
@@ -715,7 +797,7 @@ use crate::aio::Runtime;
 
 impl ConnectionLike for Client {
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
-        self.get_connection()?.req_packed_command(cmd)
+        self.get_connection(None)?.req_packed_command(cmd)
     }
 
     fn req_packed_commands(
@@ -724,7 +806,7 @@ impl ConnectionLike for Client {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        self.get_connection()?
+        self.get_connection(None)?
             .req_packed_commands(cmd, offset, count)
     }
 
@@ -733,7 +815,7 @@ impl ConnectionLike for Client {
     }
 
     fn check_connection(&mut self) -> bool {
-        if let Ok(mut conn) = self.get_connection() {
+        if let Ok(mut conn) = self.get_connection(None) {
             conn.check_connection()
         } else {
             false
@@ -741,7 +823,7 @@ impl ConnectionLike for Client {
     }
 
     fn is_open(&self) -> bool {
-        if let Ok(conn) = self.get_connection() {
+        if let Ok(conn) = self.get_connection(None) {
             conn.is_open()
         } else {
             false

@@ -1,3 +1,14 @@
+### 0.25.2 (2024-03-15)
+
+* MultiplexedConnection: Separate response handling for pipeline. ([#1078](https://github.com/redis-rs/redis-rs/pull/1078))
+
+### 0.25.1 (2024-03-12)
+
+* Fix small disambiguity in examples ([#1072](https://github.com/redis-rs/redis-rs/pull/1072) @sunhuachuang)
+* Upgrade to socket2 0.5 ([#1073](https://github.com/redis-rs/redis-rs/pull/1073) @djc)
+* Avoid library dependency on futures-time ([#1074](https://github.com/redis-rs/redis-rs/pull/1074) @djc)
+
+
 ### 0.25.0 (2024-03-08)
 
 #### Features
@@ -686,7 +697,7 @@ Old code:
 
 ```rust
 let client = redis::Client::open("redis://127.0.0.1/")?;
-let con = client.get_connection()?;
+let con = client.get_connection(None)?;
 redis::cmd("SET").arg("my_key").arg(42).execute(&con);
 ```
 
@@ -694,7 +705,7 @@ New code:
 
 ```rust
 let client = redis::Client::open("redis://127.0.0.1/")?;
-let mut con = client.get_connection()?;
+let mut con = client.get_connection(None)?;
 redis::cmd("SET").arg("my_key").arg(42).execute(&mut con);
 ```
 
@@ -704,7 +715,7 @@ Old code:
 
 ```rust
 let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-let con = client.get_connection().unwrap();
+let con = client.get_connection(None).unwrap();
 let key = "the_key";
 let (new_val,) : (isize,) = redis::transaction(&con, &[key], |pipe| {
     let old_val : isize = con.get(key)?;
@@ -718,7 +729,7 @@ New code:
 
 ```rust
 let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-let mut con = client.get_connection().unwrap();
+let mut con = client.get_connection(None).unwrap();
 let key = "the_key";
 let (new_val,) : (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
     let old_val : isize = con.get(key)?;

@@ -10,7 +10,7 @@
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
 //! let client = ClusterClient::new(nodes).unwrap();
-//! let mut connection = client.get_connection().unwrap();
+//! let mut connection = client.get_connection(None).unwrap();
 //!
 //! let _: () = connection.set("test", "test_data").unwrap();
 //! let rv: String = connection.get("test").unwrap();
@@ -25,7 +25,7 @@
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
 //! let client = ClusterClient::new(nodes).unwrap();
-//! let mut connection = client.get_connection().unwrap();
+//! let mut connection = client.get_connection(None).unwrap();
 //!
 //! let key = "test";
 //!
@@ -59,11 +59,13 @@ pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{Redirect, Route, RoutingInfo},
-    IntoConnectionInfo,
+    IntoConnectionInfo, PushInfo,
 };
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
+
+use tokio::sync::mpsc;
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::TlsConnParams;
@@ -224,6 +226,7 @@ where
     pub(crate) fn new(
         cluster_params: ClusterParams,
         initial_nodes: Vec<ConnectionInfo>,
+        _push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<Self> {
         let connection = Self {
             connections: RefCell::new(HashMap::new()),
@@ -605,18 +608,29 @@ where
                 Err(last_failure
                     .unwrap_or_else(|| (ErrorKind::IoError, "Couldn't find a connection").into()))
             }
-            Some(ResponsePolicy::OneSucceededNonEmpty) => {
+            Some(ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty) => {
+                // Attempt to return the first result that isn't `Nil` or an error.
+                // If no such response is found and all servers returned `Nil`, it indicates that all shards are empty, so return `Nil`.
+                // If we received only errors, return the last received error.
+                // If we received a mix of errors and `Nil`s, we can't determine if all shards are empty,
+                // thus we return the last received error instead of `Nil`.
                 let mut last_failure = None;
-
+                let num_of_results = results.len();
+                let mut nil_counter = 0;
                 for result in results {
                     match result.map(|(_, res)| res) {
-                        Ok(Value::Nil) => continue,
+                        Ok(Value::Nil) => nil_counter += 1,
                         Ok(val) => return Ok(val),
                         Err(err) => last_failure = Some(err),
                     }
                 }
-                Err(last_failure
-                    .unwrap_or_else(|| (ErrorKind::IoError, "Couldn't find a connection").into()))
+                if nil_counter == num_of_results {
+                    Ok(Value::Nil)
+                } else {
+                    Err(last_failure.unwrap_or_else(|| {
+                        (ErrorKind::IoError, "Couldn't find a connection").into()
+                    }))
+                }
             }
             Some(ResponsePolicy::Aggregate(op)) => {
                 let results = results
@@ -976,6 +990,7 @@ pub(crate) fn get_connection_info(
             client_name: cluster_params.client_name,
             protocol: cluster_params.protocol,
             db: 0,
+            pubsub_subscriptions: cluster_params.pubsub_subscriptions,
         },
     })
 }
