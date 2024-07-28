@@ -1313,17 +1313,23 @@ mod tests {
             ]),
         ];
         let result = super::combine_map_results(input).unwrap();
-        let expected = vec![
+        let mut expected = vec![
             (Value::BulkString(b"key1".to_vec()), Value::Int(8)),
             (Value::BulkString(b"key2".to_vec()), Value::Int(10)),
             (Value::BulkString(b"key3".to_vec()), Value::Int(15)),
         ];
-        //expected.sort_by(|a, b| a.0.cmp(&b.0));
-        let result_vec = match result {
+        expected.sort_unstable_by(|a, b| match (&a.0, &b.0) {
+            (Value::BulkString(a_bytes), Value::BulkString(b_bytes)) => a_bytes.cmp(b_bytes),
+            _ => std::cmp::Ordering::Equal,
+        });
+        let mut result_vec = match result {
             Value::Map(v) => v,
             _ => panic!("Expected Map"),
         };
-        // result_vec.sort_by(|a, b| a.0.cmp(&b.0));
+        result_vec.sort_unstable_by(|a, b| match (&a.0, &b.0) {
+            (Value::BulkString(a_bytes), Value::BulkString(b_bytes)) => a_bytes.cmp(b_bytes),
+            _ => std::cmp::Ordering::Equal,
+        });
         assert_eq!(result_vec, expected);
 
         let input = vec![Value::Int(5)];
