@@ -1291,7 +1291,7 @@ where
             Some(ResponsePolicy::CombineMaps) => {
                 future::try_join_all(receivers.into_iter().map(get_receiver))
                     .await
-                    .and_then(|results| crate::cluster_routing::combine_map_results(results))
+                    .and_then(crate::cluster_routing::combine_map_results)
             }
             Some(ResponsePolicy::Special) | None => {
                 // This is our assumption - if there's no coherent way to aggregate the responses, we just map each response to the sender, and pass it to the user.
