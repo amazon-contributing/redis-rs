@@ -1323,7 +1323,7 @@ mod tests {
             Value::Map(v) => v,
             _ => panic!("Expected Map"),
         };
-        result_vec.sort_by(|a, b| a.0.cmp(&b.0));
+        // result_vec.sort_by(|a, b| a.0.cmp(&b.0));
         assert_eq!(result_vec, expected);
 
         let input = vec![Value::Int(5)];
