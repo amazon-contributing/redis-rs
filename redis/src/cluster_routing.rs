@@ -1295,7 +1295,7 @@ mod tests {
     #[test]
     fn test_combine_map_results() {
         let input = vec![];
-        let result = combine_map_results(input).unwrap();
+        let result = super::combine_map_results(input).unwrap();
         assert_eq!(result, Value::Map(vec![]));
 
         let input = vec![
@@ -1312,7 +1312,7 @@ mod tests {
                 Value::Int(15),
             ]),
         ];
-        let result = combine_map_results(input).unwrap();
+        let result = super::combine_map_results(input).unwrap();
         let mut expected = vec![
             (Value::BulkString(b"key1".to_vec()), Value::Int(8)),
             (Value::BulkString(b"key2".to_vec()), Value::Int(10)),
@@ -1327,7 +1327,7 @@ mod tests {
         assert_eq!(result_vec, expected);
 
         let input = vec![Value::Int(5)];
-        let result = combine_map_results(input);
+        let result = super::combine_map_results(input);
         assert!(result.is_err());
     }
 }
