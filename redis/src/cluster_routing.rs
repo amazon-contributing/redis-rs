@@ -1318,7 +1318,7 @@ mod tests {
             (Value::BulkString(b"key2".to_vec()), Value::Int(10)),
             (Value::BulkString(b"key3".to_vec()), Value::Int(15)),
         ];
-        expected.sort_by(|a, b| a.0.cmp(&b.0));
+        //expected.sort_by(|a, b| a.0.cmp(&b.0));
         let mut result_vec = match result {
             Value::Map(v) => v,
             _ => panic!("Expected Map"),
