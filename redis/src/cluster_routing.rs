@@ -191,7 +191,7 @@ pub fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> RedisRes
 }
 /// Aggregate array responses into a single map.
 pub fn combine_map_results(values: Vec<Value>) -> RedisResult<Value> {
-    let mut map = HashMap::new();
+    let mut map: HashMap<Vec<u8>, i64> = HashMap::new();
 
     for value in values {
         match value {
@@ -201,9 +201,7 @@ pub fn combine_map_results(values: Vec<Value>) -> RedisResult<Value> {
                 while let Some(key) = iter.next() {
                     if let Value::BulkString(key_bytes) = key {
                         if let Some(Value::Int(value)) = iter.next() {
-                            let key_str = String::from_utf8_lossy(&key_bytes);
-
-                            *map.entry(key_str.to_string()).or_insert(0) += value;
+                            *map.entry(key_bytes).or_insert(0) += value;
                         } else {
                             return Err((ErrorKind::TypeError, "expected integer value").into());
                         }
@@ -220,7 +218,7 @@ pub fn combine_map_results(values: Vec<Value>) -> RedisResult<Value> {
 
     let result_vec: Vec<(Value, Value)> = map
         .into_iter()
-        .map(|(k, v)| (Value::BulkString(k.into_bytes()), Value::Int(v)))
+        .map(|(k, v)| (Value::BulkString(k), Value::Int(v)))
         .collect();
 
     Ok(Value::Map(result_vec))
