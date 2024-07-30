@@ -675,6 +675,27 @@ impl From<String> for OperationTarget {
     }
 }
 
+/// Represents a node to which a `MOVED` or `ASK` error redirects.
+#[derive(Clone, Debug)]
+pub(crate) struct RedirectNode {
+    /// The address of the redirect node.
+    pub _address: String,
+    /// The slot of the redirect node.
+    pub _slot: u16,
+}
+
+impl RedirectNode {
+    /// This function expects an `Option` containing a tuple with a string slice and a u16.
+    /// The tuple represents an address and a slot, respectively. If the input is `Some`,
+    /// the function converts the address to a `String` and constructs a `RedirectNode`.
+    pub(crate) fn from_option_tuple(option: Option<(&str, u16)>) -> Option<Self> {
+        option.map(|(address, slot)| RedirectNode {
+            _address: address.to_string(),
+            _slot: slot,
+        })
+    }
+}
+
 struct Message<C> {
     cmd: CmdArg<C>,
     sender: oneshot::Sender<RedisResult<Response>>,
@@ -822,6 +843,7 @@ enum Next<C> {
         // if not set, then a slot refresh should happen without sending a request afterwards
         request: Option<PendingRequest<C>>,
         sleep_duration: Option<Duration>,
+        moved_redirect: Option<RedirectNode>,
     },
     ReconnectToInitialNodes {
         // if not set, then a reconnect should happen without sending a request afterwards
@@ -868,6 +890,7 @@ impl<C> Future for Request<C> {
                         Next::RefreshSlots {
                             request: None,
                             sleep_duration: None,
+                            moved_redirect: RedirectNode::from_option_tuple(err.redirect_node()),
                         }
                         .into()
                     } else if matches!(err.retry_method(), crate::types::RetryMethod::Reconnect) {
@@ -913,6 +936,7 @@ impl<C> Future for Request<C> {
                         return Next::RefreshSlots {
                             request: Some(request),
                             sleep_duration: Some(sleep_duration),
+                            moved_redirect: None,
                         }
                         .into();
                     }
@@ -931,6 +955,7 @@ impl<C> Future for Request<C> {
                     }
                     crate::types::RetryMethod::MovedRedirect => {
                         let mut request = this.request.take().unwrap();
+                        let redirect_node = err.redirect_node();
                         request.info.set_redirect(
                             err.redirect_node()
                                 .map(|(node, _slot)| Redirect::Moved(node.to_string())),
@@ -938,6 +963,7 @@ impl<C> Future for Request<C> {
                         Next::RefreshSlots {
                             request: Some(request),
                             sleep_duration: None,
+                            moved_redirect: RedirectNode::from_option_tuple(redirect_node),
                         }
                         .into()
                     }
@@ -1064,6 +1090,7 @@ where
         Self::refresh_slots_and_subscriptions_with_retries(
             connection.inner.clone(),
             &RefreshPolicy::NotThrottable,
+            None,
         )
         .await?;
 
@@ -1223,6 +1250,7 @@ where
             if let Err(err) = Self::refresh_slots_and_subscriptions_with_retries(
                 inner.clone(),
                 &RefreshPolicy::Throttable,
+                None,
             )
             .await
             {
@@ -1464,6 +1492,7 @@ where
     async fn refresh_slots_and_subscriptions_with_retries(
         inner: Arc<InnerCore<C>>,
         policy: &RefreshPolicy,
+        moved_redirect: Option<RedirectNode>,
     ) -> RedisResult<()> {
         let SlotRefreshState {
             in_progress,
@@ -1477,7 +1506,7 @@ where
         {
             return Ok(());
         }
-        let mut skip_slots_refresh = false;
+        let mut should_refresh_slots = true;
         if *policy == RefreshPolicy::Throttable {
             // Check if the current slot refresh is triggered before the wait duration has passed
             let last_run_rlock = last_run.read().await;
@@ -1496,13 +1525,13 @@ where
                 if passed_time <= wait_duration {
                     debug!("Skipping slot refresh as the wait duration hasn't yet passed. Passed time = {:?}, 
                             Wait duration = {:?}", passed_time, wait_duration);
-                    skip_slots_refresh = true;
+                    should_refresh_slots = false;
                 }
             }
         }
 
         let mut res = Ok(());
-        if !skip_slots_refresh {
+        if should_refresh_slots {
             let retry_strategy = ExponentialBackoff {
                 initial_interval: DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL,
                 max_interval: DEFAULT_REFRESH_SLOTS_RETRY_MAX_INTERVAL,
@@ -1515,6 +1544,10 @@ where
                 Self::refresh_slots(inner.clone(), curr_retry)
             })
             .await;
+        } else if moved_redirect.is_some() {
+            // Update relevant slots in the slots map based on the moved_redirect address,
+            // rather than refreshing all slots by querying the cluster nodes for their topology view.
+            Self::update_slots_for_redirect_change(inner.clone(), moved_redirect).await?;
         }
         in_progress.store(false, Ordering::Relaxed);
 
@@ -1523,15 +1556,24 @@ where
         res
     }
 
+    /// Update relevant slots in the slots map based on the moved_redirect address
+    pub(crate) async fn update_slots_for_redirect_change(
+        _inner: Arc<InnerCore<C>>,
+        _moved_redirect: Option<RedirectNode>,
+    ) -> RedisResult<()> {
+        // TODO: Add implementation
+        Ok(())
+    }
+
     pub(crate) async fn check_topology_and_refresh_if_diff(
         inner: Arc<InnerCore<C>>,
         policy: &RefreshPolicy,
-    ) -> bool {
+    ) -> RedisResult<bool> {
         let topology_changed = Self::check_for_topology_diff(inner.clone()).await;
         if topology_changed {
-            let _ = Self::refresh_slots_and_subscriptions_with_retries(inner.clone(), policy).await;
+            Self::refresh_slots_and_subscriptions_with_retries(inner.clone(), policy, None).await?;
         }
-        topology_changed
+        Ok(topology_changed)
     }
 
     async fn periodic_topology_check(inner: Arc<InnerCore<C>>, interval_duration: Duration) {
@@ -2131,6 +2173,7 @@ where
                     *future = Box::pin(Self::refresh_slots_and_subscriptions_with_retries(
                         self.inner.clone(),
                         &RefreshPolicy::Throttable,
+                        None,
                     ));
                     Poll::Ready(Err(err))
                 }
@@ -2226,9 +2269,10 @@ where
                 Next::RefreshSlots {
                     request,
                     sleep_duration,
+                    moved_redirect,
                 } => {
-                    poll_flush_action =
-                        poll_flush_action.change_state(PollFlushAction::RebuildSlots);
+                    poll_flush_action = poll_flush_action
+                        .change_state(PollFlushAction::RebuildSlots(moved_redirect));
                     if let Some(request) = request {
                         let future: RequestState<
                             Pin<Box<dyn Future<Output = OperationResult> + Send>>,
@@ -2298,7 +2342,7 @@ where
 
 enum PollFlushAction {
     None,
-    RebuildSlots,
+    RebuildSlots(Option<RedirectNode>),
     Reconnect(Vec<String>),
     ReconnectFromInitialConnections,
 }
@@ -2313,8 +2357,9 @@ impl PollFlushAction {
                 PollFlushAction::ReconnectFromInitialConnections
             }
 
-            (PollFlushAction::RebuildSlots, _) | (_, PollFlushAction::RebuildSlots) => {
-                PollFlushAction::RebuildSlots
+            (PollFlushAction::RebuildSlots(moved_redirect), _)
+            | (_, PollFlushAction::RebuildSlots(moved_redirect)) => {
+                PollFlushAction::RebuildSlots(moved_redirect)
             }
 
             (PollFlushAction::Reconnect(mut addrs), PollFlushAction::Reconnect(new_addrs)) => {
@@ -2375,11 +2420,12 @@ where
 
             match ready!(self.poll_complete(cx)) {
                 PollFlushAction::None => return Poll::Ready(Ok(())),
-                PollFlushAction::RebuildSlots => {
+                PollFlushAction::RebuildSlots(moved_redirect) => {
                     self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
                         ClusterConnInner::refresh_slots_and_subscriptions_with_retries(
                             self.inner.clone(),
                             &RefreshPolicy::Throttable,
+                            moved_redirect,
                         ),
                     )));
                 }
