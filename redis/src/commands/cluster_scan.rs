@@ -150,7 +150,7 @@ pub(crate) trait ClusterInScan {
     async fn are_all_slots_covered(&self) -> bool;
 
     /// Check if the topology of the cluster has changed and refresh the slots if needed
-    async fn refresh_if_topology_changed(&self);
+    async fn refresh_if_topology_changed(&self) -> RedisResult<bool>;
 }
 
 /// Represents the state of a scan operation in a Redis cluster.
@@ -288,7 +288,16 @@ impl ScanState {
         &mut self,
         connection: &C,
     ) -> RedisResult<ScanState> {
-        let _ = connection.refresh_if_topology_changed().await;
+        connection
+            .refresh_if_topology_changed()
+            .await
+            .map_err(|err| {
+                RedisError::from((
+                    ErrorKind::ResponseError,
+                    "Error during cluster scan: failed to refresh slots",
+                    format!("{:?}", err),
+                ))
+            })?;
         let mut scanned_slots_map = self.scanned_slots_map;
         // If the address epoch changed it mean that some slots in the address are new, so we cant know which slots been there from the beginning and which are new, or out and in later.
         // In this case we will skip updating the scanned_slots_map and will just update the address and the cursor
@@ -387,14 +396,14 @@ where
     async fn are_all_slots_covered(&self) -> bool {
         ClusterConnInner::<C>::check_if_all_slots_covered(&self.conn_lock.read().await.slot_map)
     }
-    async fn refresh_if_topology_changed(&self) {
+    async fn refresh_if_topology_changed(&self) -> RedisResult<bool> {
         ClusterConnInner::check_topology_and_refresh_if_diff(
             self.to_owned(),
             // The cluster SCAN implementation must refresh the slots when a topology change is found
             // to ensure the scan logic is correct.
             &RefreshPolicy::NotThrottable,
         )
-        .await;
+        .await
     }
 }
 
@@ -527,7 +536,13 @@ where
 {
     // TODO: This mechanism of refreshing on failure to route to address should be part of the routing mechanism
     // After the routing mechanism is updated to handle this case, this refresh in the case bellow should be removed
-    core.refresh_if_topology_changed().await;
+    core.refresh_if_topology_changed().await.map_err(|err| {
+        RedisError::from((
+            ErrorKind::ResponseError,
+            "Error during cluster scan: failed to refresh slots",
+            format!("{:?}", err),
+        ))
+    })?;
     if !core.are_all_slots_covered().await {
         return Err(RedisError::from((
             ErrorKind::NotAllSlotsCovered,
@@ -613,7 +628,9 @@ mod tests {
     struct MockConnection;
     #[async_trait]
     impl ClusterInScan for MockConnection {
-        async fn refresh_if_topology_changed(&self) {}
+        async fn refresh_if_topology_changed(&self) -> RedisResult<bool> {
+            Ok(true)
+        }
         async fn get_address_by_slot(&self, _slot: u16) -> RedisResult<String> {
             Ok("mock_address".to_string())
         }

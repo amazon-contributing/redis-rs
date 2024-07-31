@@ -1414,6 +1414,9 @@ where
         Ok(())
     }
 
+    /// Determines if the cluster topology has changed and refreshes slots and subscriptions if needed.
+    /// Returns `RedisResult` with `true` if changes were detected and slots were refreshed,
+    /// or `false` if no changes were found. Raises an error if refreshing the topology fails.
     pub(crate) async fn check_topology_and_refresh_if_diff(
         inner: Arc<InnerCore<C>>,
         policy: &RefreshPolicy,
@@ -1428,14 +1431,30 @@ where
     async fn periodic_topology_check(inner: Arc<InnerCore<C>>, interval_duration: Duration) {
         loop {
             let _ = boxed_sleep(interval_duration).await;
-            let topology_changed =
-                Self::check_topology_and_refresh_if_diff(inner.clone(), &RefreshPolicy::Throttable)
-                    .await;
-            if !topology_changed {
-                // This serves as a safety measure for validating pubsub subsctiptions state in case it has drifted
-                // while topology stayed the same.
-                // For example, a failed attempt to refresh a connection which is triggered from refresh_pubsub_subscriptions(),
-                // might leave a node unconnected indefinitely in case topology is stable and no request are attempted to this node.
+
+            // Check and refresh topology if needed
+            let should_refresh_pubsub = match Self::check_topology_and_refresh_if_diff(
+                inner.clone(),
+                &RefreshPolicy::Throttable,
+            )
+            .await
+            {
+                Ok(topology_changed) => !topology_changed,
+                Err(err) => {
+                    warn!(
+                        "Failed to refresh slots during periodic topology checks:\n{:?}",
+                        err
+                    );
+                    true
+                }
+            };
+
+            // Refresh pubsub subscriptions if topology wasn't changed or an error occurred.
+            // This serves as a safety measure for validating pubsub subsctiptions state in case it has drifted
+            // while topology stayed the same.
+            // For example, a failed attempt to refresh a connection which is triggered from refresh_pubsub_subscriptions(),
+            // might leave a node unconnected indefinitely in case topology is stable and no request are attempted to this node.
+            if should_refresh_pubsub {
                 Self::refresh_pubsub_subscriptions(inner.clone()).await;
             }
         }
