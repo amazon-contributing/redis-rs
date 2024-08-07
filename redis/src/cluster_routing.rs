@@ -1042,7 +1042,7 @@ mod tests {
         assert_eq!(
             RoutingInfo::for_routable(&cmd("SCRIPT KILL")),
             Some(RoutingInfo::MultiNode((
-                MultipleNodeRoutingInfo::AllMasters,
+                MultipleNodeRoutingInfo::AllNodes,
                 Some(ResponsePolicy::OneSucceeded)
             )))
         );
