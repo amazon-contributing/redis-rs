@@ -1979,13 +1979,12 @@ mod cluster_async {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
                 if port == 6381 {
                     return Err(Ok(Value::Okay));
-                } else {
-                    return Err(Err((
-                        ErrorKind::NotBusy,
-                        "No scripts in execution right now",
-                    )
-                        .into()));
                 }
+                Err(Err((
+                    ErrorKind::NotBusy,
+                    "No scripts in execution right now",
+                )
+                    .into()))
             },
         );
 
