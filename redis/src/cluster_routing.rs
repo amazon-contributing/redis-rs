@@ -551,6 +551,8 @@ impl RoutingInfo {
     }
 
     /// Returns true if the `cmd` is a key-based command.
+    /// A key-based command means it will be accepted only by the slot owner shard,
+    /// while other nodes will respond with MOVED to the relevant primary owner.
     pub fn is_key_based_cmd(cmd: &[u8]) -> bool {
         match base_routing(cmd) {
             RouteBy::FirstKey
@@ -560,7 +562,15 @@ impl RoutingInfo {
             | RouteBy::SecondArgSlot
             | RouteBy::StreamsIndex
             | RouteBy::MultiShardNoValues
-            | RouteBy::MultiShardWithValues => true,
+            | RouteBy::MultiShardWithValues => {
+                if matches!(cmd, b"PUBLISH") {
+                    // PUBLISH base routing uses FirstKey for simplicity in pubsub implementation.
+                    // However, it is not a key-based command and will be accepted by all cluster nodes.
+                    false
+                } else {
+                    true
+                }
+            }
             RouteBy::AllNodes | RouteBy::AllPrimaries | RouteBy::Random | RouteBy::Undefined => {
                 false
             }
