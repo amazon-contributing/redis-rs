@@ -1,11 +1,11 @@
-use std::cmp::min;
-use std::collections::HashMap;
-
 use crate::cluster_topology::get_slot;
 use crate::cmd::{Arg, Cmd};
 use crate::types::Value;
 use crate::{ErrorKind, RedisResult};
+use std::cmp::min;
+use std::collections::HashMap;
 use std::iter::Once;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub(crate) enum Redirect {
@@ -866,14 +866,6 @@ impl Slot {
         }
     }
 
-    pub fn start(&self) -> u16 {
-        self.start
-    }
-
-    pub fn end(&self) -> u16 {
-        self.end
-    }
-
     #[allow(dead_code)] // used in tests
     pub(crate) fn master(&self) -> &str {
         self.master.as_str()
@@ -902,25 +894,29 @@ pub enum SlotAddr {
 /// which stores only the master and [optional] replica
 /// to avoid the need to choose a replica each time
 /// a command is executed
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct SlotAddrs {
-    pub(crate) primary: String,
-    pub(crate) replicas: Vec<String>,
+#[derive(Debug, Eq, PartialEq, Clone, PartialOrd, Ord)]
+pub(crate) struct ShardAddrs {
+    primary: Arc<String>,
+    replicas: Vec<Arc<String>>,
 }
 
-impl SlotAddrs {
-    pub(crate) fn new(primary: String, replicas: Vec<String>) -> Self {
+impl ShardAddrs {
+    pub(crate) fn new(primary: Arc<String>, replicas: Vec<Arc<String>>) -> Self {
         Self { primary, replicas }
     }
 
-    pub(crate) fn from_slot(slot: Slot) -> Self {
-        SlotAddrs::new(slot.master, slot.replicas)
+    pub(crate) fn primary(&self) -> Arc<String> {
+        self.primary.clone()
+    }
+
+    pub(crate) fn replicas(&self) -> &Vec<Arc<String>> {
+        self.replicas.as_ref()
     }
 }
 
-impl<'a> IntoIterator for &'a SlotAddrs {
-    type Item = &'a String;
-    type IntoIter = std::iter::Chain<Once<&'a String>, std::slice::Iter<'a, String>>;
+impl<'a> IntoIterator for &'a ShardAddrs {
+    type Item = &'a Arc<String>;
+    type IntoIter = std::iter::Chain<Once<&'a Arc<String>>, std::slice::Iter<'a, Arc<String>>>;
 
     fn into_iter(self) -> Self::IntoIter {
         std::iter::once(&self.primary).chain(self.replicas.iter())

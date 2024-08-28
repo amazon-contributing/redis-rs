@@ -300,7 +300,7 @@ pub(crate) fn calculate_topology<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cluster_routing::SlotAddrs;
+    use crate::cluster_routing::ShardAddrs;
 
     #[test]
     fn test_get_hashtag() {
@@ -456,10 +456,11 @@ mod tests {
         assert_eq!(calculate_hash(&res1), calculate_hash(&res2));
         assert_eq!(res1.0, res2.0);
         assert_eq!(res1.1.len(), res2.1.len());
-        let equality_check =
-            res1.1.iter().zip(&res2.1).all(|(first, second)| {
-                first.start() == second.start() && first.end() == second.end()
-            });
+        let equality_check = res1
+            .1
+            .iter()
+            .zip(&res2.1)
+            .all(|(first, second)| first.start == second.start && first.end == second.end);
         assert!(equality_check);
         let replicas_check = res1
             .1
@@ -502,8 +503,24 @@ mod tests {
         }
     }
 
-    fn get_node_addr(name: &str, port: u16) -> SlotAddrs {
-        SlotAddrs::new(format!("{name}:{port}"), Vec::new())
+    fn get_node_addr(name: &str, port: u16) -> ShardAddrs {
+        ShardAddrs::new(format!("{name}:{port}").into(), Vec::new())
+    }
+
+    fn collect_shard_addrs(slot_map: &SlotMap) -> Vec<ShardAddrs> {
+        let mut shard_addrs: Vec<ShardAddrs> = slot_map
+            .nodes_map()
+            .iter()
+            .map(|map_item| {
+                let shard_addrs = map_item.value();
+                let addr_reader = shard_addrs
+                    .read()
+                    .expect("Failed to obtain ShardAddrs's read lock");
+                addr_reader.clone()
+            })
+            .collect();
+        shard_addrs.sort_unstable();
+        shard_addrs
     }
 
     #[test]
@@ -524,9 +541,9 @@ mod tests {
             ReadFromReplicaStrategy::AlwaysFromPrimary,
         )
         .unwrap();
-        let res: Vec<_> = topology_view.values().collect();
+        let res = collect_shard_addrs(&topology_view);
         let node_1 = get_node_addr("node1", 6379);
-        let expected: Vec<&SlotAddrs> = vec![&node_1];
+        let expected: Vec<ShardAddrs> = vec![node_1];
         assert_eq!(res, expected);
     }
 
@@ -566,10 +583,10 @@ mod tests {
             ReadFromReplicaStrategy::AlwaysFromPrimary,
         )
         .unwrap();
-        let res: Vec<_> = topology_view.values().collect();
+        let res = collect_shard_addrs(&topology_view);
         let node_1 = get_node_addr("node1", 6379);
         let node_2 = get_node_addr("node2", 6380);
-        let expected: Vec<&SlotAddrs> = vec![&node_1, &node_2];
+        let expected: Vec<ShardAddrs> = vec![node_1, node_2];
         assert_eq!(res, expected);
     }
 
@@ -589,10 +606,10 @@ mod tests {
             ReadFromReplicaStrategy::AlwaysFromPrimary,
         )
         .unwrap();
-        let res: Vec<_> = topology_view.values().collect();
+        let res = collect_shard_addrs(&topology_view);
         let node_1 = get_node_addr("node1", 6379);
         let node_2 = get_node_addr("node2", 6380);
-        let expected: Vec<&SlotAddrs> = vec![&node_1, &node_2];
+        let expected: Vec<ShardAddrs> = vec![node_1, node_2];
         assert_eq!(res, expected);
     }
 
@@ -613,10 +630,10 @@ mod tests {
             ReadFromReplicaStrategy::AlwaysFromPrimary,
         )
         .unwrap();
-        let res: Vec<_> = topology_view.values().collect();
+        let res = collect_shard_addrs(&topology_view);
         let node_1 = get_node_addr("node3", 6381);
         let node_2 = get_node_addr("node4", 6382);
-        let expected: Vec<&SlotAddrs> = vec![&node_1, &node_2];
+        let expected: Vec<ShardAddrs> = vec![node_1, node_2];
         assert_eq!(res, expected);
     }
 
@@ -637,9 +654,9 @@ mod tests {
             ReadFromReplicaStrategy::AlwaysFromPrimary,
         )
         .unwrap();
-        let res: Vec<_> = topology_view.values().collect();
+        let res = collect_shard_addrs(&topology_view);
         let node_1 = get_node_addr("node1", 6379);
-        let expected: Vec<&SlotAddrs> = vec![&node_1];
+        let expected: Vec<ShardAddrs> = vec![node_1];
         assert_eq!(res, expected);
     }
 }

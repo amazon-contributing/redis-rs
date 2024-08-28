@@ -134,14 +134,14 @@ impl ScanStateRC {
 #[async_trait]
 pub(crate) trait ClusterInScan {
     /// Retrieves the address associated with a given slot in the cluster.
-    async fn get_address_by_slot(&self, slot: u16) -> RedisResult<String>;
+    async fn get_address_by_slot(&self, slot: u16) -> RedisResult<Arc<String>>;
 
     /// Retrieves the epoch of a given address in the cluster.
     /// The epoch represents the version of the address, which is updated when a failover occurs or slots migrate in.
     async fn get_address_epoch(&self, address: &str) -> Result<u64, RedisError>;
 
     /// Retrieves the slots assigned to a given address in the cluster.
-    async fn get_slots_of_address(&self, address: &str) -> Vec<u16>;
+    async fn get_slots_of_address(&self, address: Arc<String>) -> Vec<u16>;
 
     /// Routes a Redis command to a specific address in the cluster.
     async fn route_command(&self, cmd: Cmd, address: &str) -> RedisResult<Value>;
@@ -165,7 +165,7 @@ pub(crate) struct ScanState {
     scanned_slots_map: SlotsBitsArray,
     // the address that is being scanned currently, based on the next slot set to 0 in the scanned_slots_map, and the address that "owns" the slot
     // in the SlotMap
-    pub(crate) address_in_scan: String,
+    pub(crate) address_in_scan: Arc<String>,
     // epoch represent the version of the address, when a failover happens or slots migrate in the epoch will be updated to +1
     address_epoch: u64,
     // the status of the scan operation
@@ -189,7 +189,7 @@ impl ScanState {
     pub fn new(
         cursor: u64,
         scanned_slots_map: SlotsBitsArray,
-        address_in_scan: String,
+        address_in_scan: Arc<String>,
         address_epoch: u64,
         scan_status: ScanStateStage,
     ) -> Self {
@@ -206,7 +206,7 @@ impl ScanState {
         Self {
             cursor: 0,
             scanned_slots_map: [0; BITS_ARRAY_SIZE],
-            address_in_scan: String::new(),
+            address_in_scan: Default::default(),
             address_epoch: 0,
             scan_status: ScanStateStage::Finished,
         }
@@ -310,7 +310,9 @@ impl ScanState {
         }
         // If epoch wasn't changed, the slots owned by the address after the refresh are all valid as slots that been scanned
         // So we will update the scanned_slots_map with the slots owned by the address
-        let slots_scanned = connection.get_slots_of_address(&self.address_in_scan).await;
+        let slots_scanned = connection
+            .get_slots_of_address(self.address_in_scan.clone())
+            .await;
         for slot in slots_scanned {
             let slot_index = slot as usize / BITS_PER_U64;
             let slot_bit = slot as usize % BITS_PER_U64;
@@ -349,7 +351,7 @@ impl<C> ClusterInScan for Core<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
-    async fn get_address_by_slot(&self, slot: u16) -> RedisResult<String> {
+    async fn get_address_by_slot(&self, slot: u16) -> RedisResult<Arc<String>> {
         let address = self
             .get_address_from_slot(slot, SlotAddr::ReplicaRequired)
             .await;
@@ -374,7 +376,7 @@ where
     async fn get_address_epoch(&self, address: &str) -> Result<u64, RedisError> {
         self.as_ref().get_address_epoch(address).await
     }
-    async fn get_slots_of_address(&self, address: &str) -> Vec<u16> {
+    async fn get_slots_of_address(&self, address: Arc<String>) -> Vec<u16> {
         self.as_ref().get_slots_of_address(address).await
     }
     async fn route_command(&self, cmd: Cmd, address: &str) -> RedisResult<Value> {
@@ -591,7 +593,7 @@ mod tests {
         let scan_state = ScanState {
             cursor: 0,
             scanned_slots_map: [0; BITS_ARRAY_SIZE],
-            address_in_scan: String::from("address1"),
+            address_in_scan: String::from("address1").into(),
             address_epoch: 1,
             scan_status: ScanStateStage::InProgress,
         };
@@ -607,7 +609,7 @@ mod tests {
         let scan_state = ScanState {
             cursor: 0,
             scanned_slots_map,
-            address_in_scan: String::from("address1"),
+            address_in_scan: String::from("address1").into(),
             address_epoch: 1,
             scan_status: ScanStateStage::InProgress,
         };
@@ -619,7 +621,7 @@ mod tests {
         let scan_state = ScanState {
             cursor: 0,
             scanned_slots_map,
-            address_in_scan: String::from("address1"),
+            address_in_scan: String::from("address1").into(),
             address_epoch: 1,
             scan_status: ScanStateStage::InProgress,
         };
@@ -633,14 +635,14 @@ mod tests {
         async fn refresh_if_topology_changed(&self) -> RedisResult<bool> {
             Ok(true)
         }
-        async fn get_address_by_slot(&self, _slot: u16) -> RedisResult<String> {
-            Ok("mock_address".to_string())
+        async fn get_address_by_slot(&self, _slot: u16) -> RedisResult<Arc<String>> {
+            Ok("mock_address".to_string().into())
         }
         async fn get_address_epoch(&self, _address: &str) -> Result<u64, RedisError> {
             Ok(0)
         }
-        async fn get_slots_of_address(&self, address: &str) -> Vec<u16> {
-            if address == "mock_address" {
+        async fn get_slots_of_address(&self, address: Arc<String>) -> Vec<u16> {
+            if address.as_str() == "mock_address" {
                 vec![3, 4, 5]
             } else {
                 vec![0, 1, 2]
@@ -662,7 +664,10 @@ mod tests {
         // Assert that the scan state is initialized correctly
         assert_eq!(scan_state.cursor, 0);
         assert_eq!(scan_state.scanned_slots_map, [0; BITS_ARRAY_SIZE]);
-        assert_eq!(scan_state.address_in_scan, "mock_address");
+        assert_eq!(
+            scan_state.address_in_scan,
+            "mock_address".to_string().into()
+        );
         assert_eq!(scan_state.address_epoch, 0);
     }
 
@@ -672,7 +677,7 @@ mod tests {
         let scan_state = ScanState {
             cursor: 0,
             scanned_slots_map: [0; BITS_ARRAY_SIZE],
-            address_in_scan: "".to_string(),
+            address_in_scan: "".to_string().into(),
             address_epoch: 0,
             scan_status: ScanStateStage::InProgress,
         };
@@ -708,7 +713,10 @@ mod tests {
         assert_eq!(updated_scan_state.cursor, 0);
 
         // address_in_scan should be updated to the new address
-        assert_eq!(updated_scan_state.address_in_scan, "mock_address");
+        assert_eq!(
+            updated_scan_state.address_in_scan,
+            "mock_address".to_string().into()
+        );
 
         // address_epoch should be updated to the new address epoch
         assert_eq!(updated_scan_state.address_epoch, 0);
@@ -720,7 +728,7 @@ mod tests {
         let scan_state = ScanState::new(
             0,
             [0; BITS_ARRAY_SIZE],
-            "address".to_string(),
+            "address".to_string().into(),
             0,
             ScanStateStage::InProgress,
         );
@@ -731,7 +739,10 @@ mod tests {
             .unwrap();
         assert_eq!(updated_scan_state.scanned_slots_map, scanned_slots_map);
         assert_eq!(updated_scan_state.cursor, 0);
-        assert_eq!(updated_scan_state.address_in_scan, "mock_address");
+        assert_eq!(
+            updated_scan_state.address_in_scan,
+            "mock_address".to_string().into()
+        );
         assert_eq!(updated_scan_state.address_epoch, 0);
     }
 }

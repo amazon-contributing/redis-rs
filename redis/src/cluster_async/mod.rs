@@ -438,7 +438,7 @@ where
         &self,
         slot: u16,
         slot_addr: SlotAddr,
-    ) -> Option<String> {
+    ) -> Option<Arc<String>> {
         self.conn_lock
             .read()
             .await
@@ -486,7 +486,7 @@ where
     }
 
     // return slots of node
-    pub(crate) async fn get_slots_of_address(&self, node_address: &str) -> Vec<u16> {
+    pub(crate) async fn get_slots_of_address(&self, node_address: Arc<String>) -> Vec<u16> {
         self.conn_lock
             .read()
             .await
@@ -1090,7 +1090,6 @@ where
         Self::refresh_slots_and_subscriptions_with_retries(
             connection.inner.clone(),
             &RefreshPolicy::NotThrottable,
-            None,
         )
         .await?;
 
@@ -1250,7 +1249,6 @@ where
             if let Err(err) = Self::refresh_slots_and_subscriptions_with_retries(
                 inner.clone(),
                 &RefreshPolicy::Throttable,
-                None,
             )
             .await
             {
@@ -1492,7 +1490,6 @@ where
     async fn refresh_slots_and_subscriptions_with_retries(
         inner: Arc<InnerCore<C>>,
         policy: &RefreshPolicy,
-        moved_redirect: Option<RedirectNode>,
     ) -> RedisResult<()> {
         let SlotRefreshState {
             in_progress,
@@ -1544,25 +1541,12 @@ where
                 Self::refresh_slots(inner.clone(), curr_retry)
             })
             .await;
-        } else if moved_redirect.is_some() {
-            // Update relevant slots in the slots map based on the moved_redirect address,
-            // rather than refreshing all slots by querying the cluster nodes for their topology view.
-            Self::update_slots_for_redirect_change(inner.clone(), moved_redirect).await?;
         }
         in_progress.store(false, Ordering::Relaxed);
 
         Self::refresh_pubsub_subscriptions(inner).await;
 
         res
-    }
-
-    /// Update relevant slots in the slots map based on the moved_redirect address
-    pub(crate) async fn update_slots_for_redirect_change(
-        _inner: Arc<InnerCore<C>>,
-        _moved_redirect: Option<RedirectNode>,
-    ) -> RedisResult<()> {
-        // TODO: Add implementation
-        Ok(())
     }
 
     /// Determines if the cluster topology has changed and refreshes slots and subscriptions if needed.
@@ -1574,7 +1558,7 @@ where
     ) -> RedisResult<bool> {
         let topology_changed = Self::check_for_topology_diff(inner.clone()).await;
         if topology_changed {
-            Self::refresh_slots_and_subscriptions_with_retries(inner.clone(), policy, None).await?;
+            Self::refresh_slots_and_subscriptions_with_retries(inner.clone(), policy).await?;
         }
         Ok(topology_changed)
     }
@@ -1797,21 +1781,20 @@ where
         .0?;
         let connections = &*read_guard;
         // Create a new connection vector of the found nodes
-        let mut nodes = new_slots.values().flatten().collect::<Vec<_>>();
-        nodes.sort_unstable();
-        nodes.dedup();
+        let nodes = new_slots.all_node_addresses();
         let nodes_len = nodes.len();
         let addresses_and_connections_iter = stream::iter(nodes)
             .fold(
                 Vec::with_capacity(nodes_len),
                 |mut addrs_and_conns, addr| async move {
+                    let addr = addr.to_string();
                     if let Some(node) = connections.node_for_address(addr.as_str()) {
                         addrs_and_conns.push((addr, Some(node)));
                         return addrs_and_conns;
                     }
                     // If it's a DNS endpoint, it could have been stored in the existing connections vector using the resolved IP address instead of the DNS endpoint's name.
                     // We shall check if a connection is already exists under the resolved IP name.
-                    let (host, port) = match get_host_and_port_from_addr(addr) {
+                    let (host, port) = match get_host_and_port_from_addr(&addr) {
                         Some((host, port)) => (host, port),
                         None => {
                             addrs_and_conns.push((addr, None));
@@ -1837,10 +1820,10 @@ where
                 |connections, (addr, node)| async {
                     let mut cluster_params = inner.cluster_params.clone();
                     let subs_guard = inner.subscriptions_by_address.read().await;
-                    cluster_params.pubsub_subscriptions = subs_guard.get(addr).cloned();
+                    cluster_params.pubsub_subscriptions = subs_guard.get(&addr).cloned();
                     drop(subs_guard);
                     let node = get_or_create_conn(
-                        addr,
+                        &addr,
                         node,
                         &cluster_params,
                         RefreshConnectionType::AllConnections,
@@ -1848,7 +1831,7 @@ where
                     )
                     .await;
                     if let Ok(node) = node {
-                        connections.0.insert(addr.into(), node);
+                        connections.0.insert(addr, node);
                     }
                     connections
                 },
@@ -2192,7 +2175,6 @@ where
                     *future = Box::pin(Self::refresh_slots_and_subscriptions_with_retries(
                         self.inner.clone(),
                         &RefreshPolicy::Throttable,
-                        None,
                     ));
                     Poll::Ready(Err(err))
                 }
@@ -2439,12 +2421,12 @@ where
 
             match ready!(self.poll_complete(cx)) {
                 PollFlushAction::None => return Poll::Ready(Ok(())),
-                PollFlushAction::RebuildSlots(moved_redirect) => {
+                PollFlushAction::RebuildSlots(_moved_redirect) => {
+                    // TODO: Add logic to update the slots map based on the MOVED error
                     self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
                         ClusterConnInner::refresh_slots_and_subscriptions_with_retries(
                             self.inner.clone(),
                             &RefreshPolicy::Throttable,
-                            moved_redirect,
                         ),
                     )));
                 }
