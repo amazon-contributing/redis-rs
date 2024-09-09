@@ -835,7 +835,9 @@ impl<C> Future for Request<C> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
         let mut this = self.as_mut().project();
-        if this.request.is_none() {
+        // If the sender is closed, the caller is no longer waiting for the reply, and it is ambiguous
+        // whether they expect the side-effect of the request to happen or not.
+        if this.request.is_none() || this.request.as_ref().unwrap().sender.is_closed() {
             return Poll::Ready(Next::Done);
         }
         let future = match this.future.as_mut().project() {
