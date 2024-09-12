@@ -37,26 +37,26 @@ jobs:
               rust: stable,
               db-org: valkey-io,
               db-name: valkey,
-              db-version: 7.2.6
+              db-version: 7.2.4
             },
 
             # Different rust cases
             {
               rust: beta,
-              db-org: redis,
-              db-name: redis,
+              db-org: valkey-io,
+              db-name: valkey,
               db-version: 7.2.4
             },
             {
               rust: nightly,
-              db-org: redis,
-              db-name: redis,
+              db-org: valkey-io,
+              db-name: valkey,
               db-version: 7.2.4
             },
             {
               rust: 1.65.0,
-              db-org: redis,
-              db-name: redis,
+              db-org: valkey-io,
+              db-name: valkey,
               db-version: 7.2.4
             }
           ]
