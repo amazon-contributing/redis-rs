@@ -1,11 +1,12 @@
 use crate::cluster_async::ConnectionFuture;
-use crate::cluster_routing::{Route, SlotAddr};
+use crate::cluster_routing::{Route, ShardAddrs, SlotAddr};
 use crate::cluster_slotmap::{ReadFromReplicaStrategy, SlotMap, SlotMapValue};
 use crate::cluster_topology::TopologyHash;
 use dashmap::DashMap;
 use futures::FutureExt;
 use rand::seq::IteratorRandom;
 use std::net::IpAddr;
+use std::sync::Arc;
 
 /// A struct that encapsulates a network connection along with its associated IP address.
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -137,6 +138,16 @@ where
         }
     }
 
+    /// Returns an iterator over the nodes in the `slot_map`, yielding pairs of the node address and its associated shard addresses.
+    pub(crate) fn slot_map_nodes(
+        &self,
+    ) -> impl Iterator<Item = (Arc<String>, Arc<ShardAddrs>)> + '_ {
+        self.slot_map
+            .nodes_map()
+            .iter()
+            .map(|item| (item.key().clone(), item.value().clone()))
+    }
+
     // Extends the current connection map with the provided one
     pub(crate) fn extend_connection_map(
         &mut self,
@@ -154,10 +165,7 @@ where
         &self,
         slot_map_value: &SlotMapValue,
     ) -> Option<ConnectionAndAddress<Connection>> {
-        let addrs = &slot_map_value
-            .addrs
-            .read()
-            .expect("Failed to obtain ShardAddrs's read lock");
+        let addrs = &slot_map_value.addrs;
         let initial_index = slot_map_value
             .last_used_replica
             .load(std::sync::atomic::Ordering::Relaxed);
@@ -185,10 +193,7 @@ where
 
     fn lookup_route(&self, route: &Route) -> Option<ConnectionAndAddress<Connection>> {
         let slot_map_value = self.slot_map.slot_value_for_route(route)?;
-        let addrs = &slot_map_value
-            .addrs
-            .read()
-            .expect("Failed to obtain ShardAddrs's read lock");
+        let addrs = &slot_map_value.addrs;
         if addrs.replicas().is_empty() {
             return self.connection_for_address(addrs.primary().as_str());
         }

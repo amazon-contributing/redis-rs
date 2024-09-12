@@ -31,7 +31,7 @@ fn bench_simple_getsetdel_async(b: &mut Bencher) {
                 () = redis::cmd("SET")
                     .arg(key)
                     .arg(42)
-                    .query_async(&mut con)
+                    .query_async::<_, Option<Value>>(&mut con)
                     .await?;
                 let _: isize = redis::cmd("GET").arg(key).query_async(&mut con).await?;
                 () = redis::cmd("DEL").arg(key).query_async(&mut con).await?;
