@@ -1287,12 +1287,7 @@ where
         let mut nodes_to_delete = Vec::new();
         let connections_container = inner.conn_lock.read().await;
 
-        let all_nodes_with_slots: HashSet<String> = connections_container
-            .slot_map
-            .addresses_for_all_nodes()
-            .iter()
-            .map(|addr| String::from(*addr))
-            .collect();
+        let all_nodes_with_slots = connections_container.slot_map.all_node_addresses();
 
         connections_container
             .all_node_connections()
@@ -1325,8 +1320,8 @@ where
         addrs_to_refresh.extend(
             all_nodes_with_slots
                 .iter()
-                .filter(|addr| !all_valid_conns.contains_key(*addr))
-                .cloned(),
+                .filter(|addr| !all_valid_conns.contains_key(addr.as_str()))
+                .map(|addr| addr.to_string()),
         );
 
         if !addrs_to_refresh.is_empty() {
