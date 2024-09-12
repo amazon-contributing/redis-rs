@@ -1,11 +1,12 @@
 use crate::cluster_async::ConnectionFuture;
-use crate::cluster_routing::{Route, SlotAddr};
+use crate::cluster_routing::{Route, ShardAddrs, SlotAddr};
 use crate::cluster_slotmap::{ReadFromReplicaStrategy, SlotMap, SlotMapValue};
 use crate::cluster_topology::TopologyHash;
 use dashmap::DashMap;
 use futures::FutureExt;
 use rand::seq::IteratorRandom;
 use std::net::IpAddr;
+use std::sync::Arc;
 
 /// A struct that encapsulates a network connection along with its associated IP address.
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -137,6 +138,16 @@ where
         }
     }
 
+    /// Returns an iterator over the nodes in the `slot_map`, yielding pairs of the node address and its associated shard addresses.
+    pub(crate) fn slot_map_nodes(
+        &self,
+    ) -> impl Iterator<Item = (Arc<String>, Arc<ShardAddrs>)> + '_ {
+        self.slot_map
+            .nodes_map()
+            .iter()
+            .map(|item| (item.key().clone(), item.value().clone()))
+    }
+
     // Extends the current connection map with the provided one
     pub(crate) fn extend_connection_map(
         &mut self,
@@ -147,11 +158,7 @@ where
 
     /// Returns true if the address represents a known primary node.
     pub(crate) fn is_primary(&self, address: &String) -> bool {
-        self.connection_for_address(address).is_some()
-            && self
-                .slot_map
-                .values()
-                .any(|slot_addrs| slot_addrs.primary.as_str() == address)
+        self.connection_for_address(address).is_some() && self.slot_map.is_primary(address)
     }
 
     fn round_robin_read_from_replica(
@@ -160,19 +167,20 @@ where
     ) -> Option<ConnectionAndAddress<Connection>> {
         let addrs = &slot_map_value.addrs;
         let initial_index = slot_map_value
-            .latest_used_replica
+            .last_used_replica
             .load(std::sync::atomic::Ordering::Relaxed);
         let mut check_count = 0;
         loop {
             check_count += 1;
 
             // Looped through all replicas, no connected replica was found.
-            if check_count > addrs.replicas.len() {
-                return self.connection_for_address(addrs.primary.as_str());
+            if check_count > addrs.replicas().len() {
+                return self.connection_for_address(addrs.primary().as_str());
             }
-            let index = (initial_index + check_count) % addrs.replicas.len();
-            if let Some(connection) = self.connection_for_address(addrs.replicas[index].as_str()) {
-                let _ = slot_map_value.latest_used_replica.compare_exchange_weak(
+            let index = (initial_index + check_count) % addrs.replicas().len();
+            if let Some(connection) = self.connection_for_address(addrs.replicas()[index].as_str())
+            {
+                let _ = slot_map_value.last_used_replica.compare_exchange_weak(
                     initial_index,
                     index,
                     std::sync::atomic::Ordering::Relaxed,
@@ -186,15 +194,15 @@ where
     fn lookup_route(&self, route: &Route) -> Option<ConnectionAndAddress<Connection>> {
         let slot_map_value = self.slot_map.slot_value_for_route(route)?;
         let addrs = &slot_map_value.addrs;
-        if addrs.replicas.is_empty() {
-            return self.connection_for_address(addrs.primary.as_str());
+        if addrs.replicas().is_empty() {
+            return self.connection_for_address(addrs.primary().as_str());
         }
 
         match route.slot_addr() {
-            SlotAddr::Master => self.connection_for_address(addrs.primary.as_str()),
+            SlotAddr::Master => self.connection_for_address(addrs.primary().as_str()),
             SlotAddr::ReplicaOptional => match self.read_from_replica_strategy {
                 ReadFromReplicaStrategy::AlwaysFromPrimary => {
-                    self.connection_for_address(addrs.primary.as_str())
+                    self.connection_for_address(addrs.primary().as_str())
                 }
                 ReadFromReplicaStrategy::RoundRobin => {
                     self.round_robin_read_from_replica(slot_map_value)
@@ -232,7 +240,7 @@ where
         self.slot_map
             .addresses_for_all_primaries()
             .into_iter()
-            .flat_map(|addr| self.connection_for_address(addr))
+            .flat_map(|addr| self.connection_for_address(&addr))
     }
 
     pub(crate) fn node_for_address(&self, address: &str) -> Option<ClusterNode<Connection>> {

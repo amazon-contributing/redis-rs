@@ -31,7 +31,7 @@ pub mod testing {
 }
 use crate::{
     client::GlideConnectionOptions,
-    cluster_routing::{Routable, RoutingInfo},
+    cluster_routing::{Routable, RoutingInfo, ShardUpdateResult},
     cluster_slotmap::SlotMap,
     cluster_topology::SLOT_SIZE,
     cmd,
@@ -438,7 +438,7 @@ where
         &self,
         slot: u16,
         slot_addr: SlotAddr,
-    ) -> Option<String> {
+    ) -> Option<Arc<String>> {
         self.conn_lock
             .read()
             .await
@@ -486,7 +486,7 @@ where
     }
 
     // return slots of node
-    pub(crate) async fn get_slots_of_address(&self, node_address: &str) -> Vec<u16> {
+    pub(crate) async fn get_slots_of_address(&self, node_address: Arc<String>) -> Vec<u16> {
         self.conn_lock
             .read()
             .await
@@ -675,6 +675,25 @@ impl From<String> for OperationTarget {
     }
 }
 
+/// Represents a node to which a `MOVED` or `ASK` error redirects.
+#[derive(Clone, Debug)]
+pub(crate) struct RedirectNode {
+    /// The address of the redirect node.
+    pub address: String,
+    /// The slot of the redirect node.
+    pub slot: u16,
+}
+
+impl RedirectNode {
+    /// Constructs a `RedirectNode` from an optional tuple containing an address and a slot number.
+    pub(crate) fn from_option_tuple(option: Option<(&str, u16)>) -> Option<Self> {
+        option.map(|(address, slot)| RedirectNode {
+            address: address.to_string(),
+            slot,
+        })
+    }
+}
+
 struct Message<C> {
     cmd: CmdArg<C>,
     sender: oneshot::Sender<RedisResult<Response>>,
@@ -786,6 +805,10 @@ pin_project! {
             #[pin]
             sleep: BoxFuture<'static, ()>,
         },
+        UpdateMoved {
+            #[pin]
+            future: BoxFuture<'static, RedisResult<()>>,
+        },
     }
 }
 
@@ -822,6 +845,7 @@ enum Next<C> {
         // if not set, then a slot refresh should happen without sending a request afterwards
         request: Option<PendingRequest<C>>,
         sleep_duration: Option<Duration>,
+        moved_redirect: Option<RedirectNode>,
     },
     ReconnectToInitialNodes {
         // if not set, then a reconnect should happen without sending a request afterwards
@@ -849,8 +873,25 @@ impl<C> Future for Request<C> {
                 }
                 .into();
             }
+            RequestStateProj::UpdateMoved { future } => {
+                if let Err(err) = ready!(future.poll(cx)) {
+                    // Updating the slot map based on the MOVED error is an optimization.
+                    // If it fails, proceed by retrying the request with the redirected node,
+                    // and allow the slot refresh task to correct the slot map.
+                    info!(
+                        "Failed to update the slot map based on the received MOVED error.
+                        Error: {err:?}"
+                    );
+                }
+                if let Some(request) = self.project().request.take() {
+                    return Next::Retry { request }.into();
+                } else {
+                    return Next::Done.into();
+                }
+            }
             _ => panic!("Request future must be Some"),
         };
+
         match ready!(future.poll(cx)) {
             Ok(item) => {
                 self.respond(Ok(item));
@@ -868,6 +909,7 @@ impl<C> Future for Request<C> {
                         Next::RefreshSlots {
                             request: None,
                             sleep_duration: None,
+                            moved_redirect: RedirectNode::from_option_tuple(err.redirect_node()),
                         }
                         .into()
                     } else if matches!(err.retry_method(), crate::types::RetryMethod::Reconnect) {
@@ -913,6 +955,7 @@ impl<C> Future for Request<C> {
                         return Next::RefreshSlots {
                             request: Some(request),
                             sleep_duration: Some(sleep_duration),
+                            moved_redirect: None,
                         }
                         .into();
                     }
@@ -931,6 +974,7 @@ impl<C> Future for Request<C> {
                     }
                     crate::types::RetryMethod::MovedRedirect => {
                         let mut request = this.request.take().unwrap();
+                        let redirect_node = err.redirect_node();
                         request.info.set_redirect(
                             err.redirect_node()
                                 .map(|(node, _slot)| Redirect::Moved(node.to_string())),
@@ -938,6 +982,7 @@ impl<C> Future for Request<C> {
                         Next::RefreshSlots {
                             request: Some(request),
                             sleep_duration: None,
+                            moved_redirect: RedirectNode::from_option_tuple(redirect_node),
                         }
                         .into()
                     }
@@ -1242,12 +1287,7 @@ where
         let mut nodes_to_delete = Vec::new();
         let connections_container = inner.conn_lock.read().await;
 
-        let all_nodes_with_slots: HashSet<String> = connections_container
-            .slot_map
-            .addresses_for_all_nodes()
-            .iter()
-            .map(|addr| String::from(*addr))
-            .collect();
+        let all_nodes_with_slots = connections_container.slot_map.all_node_addresses();
 
         connections_container
             .all_node_connections()
@@ -1280,8 +1320,8 @@ where
         addrs_to_refresh.extend(
             all_nodes_with_slots
                 .iter()
-                .filter(|addr| !all_valid_conns.contains_key(*addr))
-                .cloned(),
+                .filter(|addr| !all_valid_conns.contains_key(addr.as_str()))
+                .map(|addr| addr.to_string()),
         );
 
         if !addrs_to_refresh.is_empty() {
@@ -1477,7 +1517,7 @@ where
         {
             return Ok(());
         }
-        let mut skip_slots_refresh = false;
+        let mut should_refresh_slots = true;
         if *policy == RefreshPolicy::Throttable {
             // Check if the current slot refresh is triggered before the wait duration has passed
             let last_run_rlock = last_run.read().await;
@@ -1496,13 +1536,13 @@ where
                 if passed_time <= wait_duration {
                     debug!("Skipping slot refresh as the wait duration hasn't yet passed. Passed time = {:?}, 
                             Wait duration = {:?}", passed_time, wait_duration);
-                    skip_slots_refresh = true;
+                    should_refresh_slots = false;
                 }
             }
         }
 
         let mut res = Ok(());
-        if !skip_slots_refresh {
+        if should_refresh_slots {
             let retry_strategy = ExponentialBackoff {
                 initial_interval: DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL,
                 max_interval: DEFAULT_REFRESH_SLOTS_RETRY_MAX_INTERVAL,
@@ -1523,28 +1563,47 @@ where
         res
     }
 
+    /// Determines if the cluster topology has changed and refreshes slots and subscriptions if needed.
+    /// Returns `RedisResult` with `true` if changes were detected and slots were refreshed,
+    /// or `false` if no changes were found. Raises an error if refreshing the topology fails.
     pub(crate) async fn check_topology_and_refresh_if_diff(
         inner: Arc<InnerCore<C>>,
         policy: &RefreshPolicy,
-    ) -> bool {
+    ) -> RedisResult<bool> {
         let topology_changed = Self::check_for_topology_diff(inner.clone()).await;
         if topology_changed {
-            let _ = Self::refresh_slots_and_subscriptions_with_retries(inner.clone(), policy).await;
+            Self::refresh_slots_and_subscriptions_with_retries(inner.clone(), policy).await?;
         }
-        topology_changed
+        Ok(topology_changed)
     }
 
     async fn periodic_topology_check(inner: Arc<InnerCore<C>>, interval_duration: Duration) {
         loop {
             let _ = boxed_sleep(interval_duration).await;
-            let topology_changed =
-                Self::check_topology_and_refresh_if_diff(inner.clone(), &RefreshPolicy::Throttable)
-                    .await;
-            if !topology_changed {
-                // This serves as a safety measure for validating pubsub subsctiptions state in case it has drifted
-                // while topology stayed the same.
-                // For example, a failed attempt to refresh a connection which is triggered from refresh_pubsub_subscriptions(),
-                // might leave a node unconnected indefinitely in case topology is stable and no request are attempted to this node.
+
+            // Check and refresh topology if needed
+            let should_refresh_pubsub = match Self::check_topology_and_refresh_if_diff(
+                inner.clone(),
+                &RefreshPolicy::Throttable,
+            )
+            .await
+            {
+                Ok(topology_changed) => !topology_changed,
+                Err(err) => {
+                    warn!(
+                        "Failed to refresh slots during periodic topology checks:\n{:?}",
+                        err
+                    );
+                    true
+                }
+            };
+
+            // Refresh pubsub subscriptions if topology wasn't changed or an error occurred.
+            // This serves as a safety measure for validating pubsub subsctiptions state in case it has drifted
+            // while topology stayed the same.
+            // For example, a failed attempt to refresh a connection which is triggered from refresh_pubsub_subscriptions(),
+            // might leave a node unconnected indefinitely in case topology is stable and no request are attempted to this node.
+            if should_refresh_pubsub {
                 Self::refresh_pubsub_subscriptions(inner.clone()).await;
             }
         }
@@ -1736,21 +1795,20 @@ where
         .0?;
         let connections = &*read_guard;
         // Create a new connection vector of the found nodes
-        let mut nodes = new_slots.values().flatten().collect::<Vec<_>>();
-        nodes.sort_unstable();
-        nodes.dedup();
+        let nodes = new_slots.all_node_addresses();
         let nodes_len = nodes.len();
         let addresses_and_connections_iter = stream::iter(nodes)
             .fold(
                 Vec::with_capacity(nodes_len),
                 |mut addrs_and_conns, addr| async move {
+                    let addr = addr.to_string();
                     if let Some(node) = connections.node_for_address(addr.as_str()) {
                         addrs_and_conns.push((addr, Some(node)));
                         return addrs_and_conns;
                     }
                     // If it's a DNS endpoint, it could have been stored in the existing connections vector using the resolved IP address instead of the DNS endpoint's name.
                     // We shall check if a connection is already exists under the resolved IP name.
-                    let (host, port) = match get_host_and_port_from_addr(addr) {
+                    let (host, port) = match get_host_and_port_from_addr(&addr) {
                         Some((host, port)) => (host, port),
                         None => {
                             addrs_and_conns.push((addr, None));
@@ -1776,10 +1834,10 @@ where
                 |connections, (addr, node)| async {
                     let mut cluster_params = inner.cluster_params.clone();
                     let subs_guard = inner.subscriptions_by_address.read().await;
-                    cluster_params.pubsub_subscriptions = subs_guard.get(addr).cloned();
+                    cluster_params.pubsub_subscriptions = subs_guard.get(&addr).cloned();
                     drop(subs_guard);
                     let node = get_or_create_conn(
-                        addr,
+                        &addr,
                         node,
                         &cluster_params,
                         RefreshConnectionType::AllConnections,
@@ -1787,7 +1845,7 @@ where
                     )
                     .await;
                     if let Ok(node) = node {
-                        connections.0.insert(addr.into(), node);
+                        connections.0.insert(addr, node);
                     }
                     connections
                 },
@@ -1805,6 +1863,77 @@ where
             topology_hash,
         );
         Ok(())
+    }
+
+    /// Handles MOVED errors by updating the client's slot and node mappings based on the new primary's role:
+    /// /// Updates the slot and node mappings in response to a MOVED error.
+    /// This function handles various scenarios based on the new primary's role:
+    ///
+    /// 1. **No Change**: If the new primary is already the current slot owner, no updates are needed.
+    /// 2. **Failover**: If the new primary is a replica within the same shard (indicating a failover),
+    ///    the slot ownership is updated by promoting the replica to the primary in the existing shard addresses.
+    /// 3. **Slot Migration**: If the new primary is an existing primary in another shard, this indicates a slot migration,
+    ///    and the slot mapping is updated to point to the new shard addresses.
+    /// 4. **Replica Moved to a Different Shard**: If the new primary is a replica in a different shard, it can be due to:
+    ///    - The replica became the primary of its shard after a failover, with new slots migrated to it.
+    ///    - The replica has moved to a different shard as the primary.
+    ///      Since further information is unknown, the replica is removed from its original shard and added as the primary of a new shard.
+    /// 5. **New Node**: If the new primary is unknown, it is added as a new node in a new shard, possibly indicating scale-out.
+    ///
+    /// # Arguments
+    /// * `inner` - Shared reference to InnerCore containing connection and slot state.
+    /// * `slot` - The slot number reported as moved.
+    /// * `new_primary` - The address of the node now responsible for the slot.
+    ///
+    /// # Returns
+    /// * `RedisResult<()>` indicating success or failure in updating slot mappings.
+    async fn update_upon_moved_error(
+        inner: Arc<InnerCore<C>>,
+        slot: u16,
+        new_primary: Arc<String>,
+    ) -> RedisResult<()> {
+        let mut connections_container = inner.conn_lock.write().await;
+        let curr_shard_addrs = connections_container.slot_map.shard_addrs_for_slot(slot);
+        // Check if the new primary is part of the current shard and update if required
+        if let Some(curr_shard_addrs) = curr_shard_addrs {
+            match curr_shard_addrs.attempt_shard_role_update(new_primary.clone()) {
+                // Scenario 1: No changes needed as the new primary is already the current slot owner.
+                // Scenario 2: Failover occurred and the new primary was promoted from a replica.
+                ShardUpdateResult::AlreadyPrimary | ShardUpdateResult::Promoted => return Ok(()),
+                // The node was not found in this shard, proceed with further scenarios.
+                ShardUpdateResult::NodeNotFound => {}
+            }
+        }
+
+        // Scenario 3 & 4: Check if the new primary exists in other shards
+        let mut nodes_iter = connections_container.slot_map_nodes();
+        for (node_addr, shard_addrs_arc) in &mut nodes_iter {
+            if node_addr == new_primary {
+                let is_existing_primary = shard_addrs_arc.primary().eq(&new_primary);
+                if is_existing_primary {
+                    // Scenario 3: Slot Migration - The new primary is an existing primary in another shard
+                    // Update the associated addresses for `slot` to `shard_addrs`.
+                    drop(nodes_iter);
+                    return connections_container
+                        .slot_map
+                        .update_slot_range(slot, shard_addrs_arc.clone());
+                } else {
+                    // Scenario 4: The MOVED error redirects to `new_primary` which is known as a replica in a shard that doesn’t own `slot`.
+                    // Remove the replica from its existing shard and treat it as a new node in a new shard.
+                    shard_addrs_arc.remove_replica(new_primary.clone())?;
+                    drop(nodes_iter);
+                    return connections_container
+                        .slot_map
+                        .add_new_primary(slot, new_primary);
+                }
+            }
+        }
+
+        // Scenario 5: New Node - The new primary is not present in the current slots map, add it as a primary of a new shard.
+        drop(nodes_iter);
+        connections_container
+            .slot_map
+            .add_new_primary(slot, new_primary)
     }
 
     async fn execute_on_multiple_nodes<'a>(
@@ -2226,26 +2355,39 @@ where
                 Next::RefreshSlots {
                     request,
                     sleep_duration,
+                    moved_redirect,
                 } => {
                     poll_flush_action =
                         poll_flush_action.change_state(PollFlushAction::RebuildSlots);
-                    if let Some(request) = request {
-                        let future: RequestState<
-                            Pin<Box<dyn Future<Output = OperationResult> + Send>>,
-                        > = match sleep_duration {
-                            Some(sleep_duration) => RequestState::Sleep {
+                    let future: Option<
+                        RequestState<Pin<Box<dyn Future<Output = OperationResult> + Send>>>,
+                    > = if let Some(moved_redirect) = moved_redirect {
+                        Some(RequestState::UpdateMoved {
+                            future: Box::pin(ClusterConnInner::update_upon_moved_error(
+                                self.inner.clone(),
+                                moved_redirect.slot,
+                                moved_redirect.address.into(),
+                            )),
+                        })
+                    } else if let Some(ref request) = request {
+                        match sleep_duration {
+                            Some(sleep_duration) => Some(RequestState::Sleep {
                                 sleep: boxed_sleep(sleep_duration),
-                            },
-                            None => RequestState::Future {
+                            }),
+                            None => Some(RequestState::Future {
                                 future: Box::pin(Self::try_request(
                                     request.info.clone(),
                                     self.inner.clone(),
                                 )),
-                            },
-                        };
+                            }),
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(future) = future {
                         self.in_flight_requests.push(Box::pin(Request {
                             retry_params: self.inner.cluster_params.retry_params.clone(),
-                            request: Some(request),
+                            request,
                             future,
                         }));
                     }
