@@ -16,7 +16,7 @@ mod cluster_async {
     };
 
     use futures::prelude::*;
-    use futures_time::task::sleep;
+    use futures_time::{future::FutureExt, task::sleep};
     use once_cell::sync::Lazy;
     use std::ops::Add;
 
@@ -4140,6 +4140,52 @@ mod cluster_async {
                 Ok::<_, RedisError>(())
             })
             .unwrap();
+    }
+
+    #[test]
+    fn test_async_cluster_do_not_retry_when_receiver_was_dropped() {
+        let name = "test_async_cluster_do_not_retry_when_receiver_was_dropped";
+        let cmd = cmd("FAKE_COMMAND");
+        let packed_cmd = cmd.get_packed_command();
+        let request_counter = Arc::new(AtomicU32::new(0));
+        let cloned_req_counter = request_counter.clone();
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(5)
+                .max_retry_wait(2)
+                .min_retry_wait(2),
+            name,
+            move |received_cmd: &[u8], _| {
+                respond_startup(name, received_cmd)?;
+
+                if received_cmd == packed_cmd {
+                    cloned_req_counter.fetch_add(1, Ordering::Relaxed);
+                    return Err(Err((ErrorKind::TryAgain, "seriously, try again").into()));
+                }
+
+                Err(Ok(Value::Okay))
+            },
+        );
+
+        runtime.block_on(async move {
+            let err = cmd
+                .query_async::<_, Value>(&mut connection)
+                .timeout(futures_time::time::Duration::from_millis(1))
+                .await
+                .unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+
+            // we sleep here, to allow the cluster connection time to retry. We expect it won't, but without this
+            // sleep the test will complete before the the runtime gave the connection time to retry, which would've made the
+            // test pass regardless of whether the connection tries retrying or not.
+            sleep(Duration::from_millis(10).into()).await;
+        });
+
+        assert_eq!(request_counter.load(Ordering::Relaxed), 1);
     }
 
     #[cfg(feature = "tls-rustls")]
