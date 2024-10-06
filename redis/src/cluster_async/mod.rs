@@ -588,6 +588,9 @@ impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
             SingleNodeRoutingInfo::SpecificNode(route) => {
                 InternalSingleNodeRouting::SpecificNode(route)
             }
+            SingleNodeRoutingInfo::RandomPrimary => {
+                InternalSingleNodeRouting::SpecificNode(Route::new_random_primary())
+            }
             SingleNodeRoutingInfo::ByAddress { host, port } => {
                 InternalSingleNodeRouting::ByAddress(format!("{host}:{port}"))
             }
@@ -620,6 +623,9 @@ fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> 
             Some(cluster_routing::RoutingInfo::SingleNode(
                 SingleNodeRoutingInfo::SpecificNode(route),
             )) => Some(route),
+            Some(cluster_routing::RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::RandomPrimary,
+            )) => Some(Route::new_random_primary()),
             Some(cluster_routing::RoutingInfo::MultiNode(_)) => None,
             Some(cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
                 ..

@@ -1,5 +1,6 @@
 use super::{AsyncStream, RedisResult, RedisRuntime, SocketAddr};
 use async_trait::async_trait;
+#[allow(unused_imports)] // silence warning in multiple configuration builds
 use std::{
     future::Future,
     io,

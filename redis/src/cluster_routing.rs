@@ -66,6 +66,8 @@ pub enum RoutingInfo {
 pub enum SingleNodeRoutingInfo {
     /// Route to any node at random
     Random,
+    /// Route to any *primary* node
+    RandomPrimary,
     /// Route to the node that matches the [Route]
     SpecificNode(Route),
     /// Route to the node with the given address.
@@ -610,7 +612,13 @@ impl RoutingInfo {
                     .and_then(|x| std::str::from_utf8(x).ok())
                     .and_then(|x| x.parse::<u64>().ok())?;
                 if key_count == 0 {
-                    Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                    if is_readonly_cmd(cmd) {
+                        Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                    } else {
+                        Some(RoutingInfo::SingleNode(
+                            SingleNodeRoutingInfo::RandomPrimary,
+                        ))
+                    }
                 } else {
                     r.arg_idx(3).map(|key| RoutingInfo::for_key(cmd, key))
                 }
@@ -949,6 +957,18 @@ impl Route {
     pub fn slot_addr(&self) -> SlotAddr {
         self.1
     }
+
+    /// Returns a new Route for a random primary node
+    pub fn new_random_primary() -> Self {
+        Self::new(random_slot(), SlotAddr::Master)
+    }
+}
+
+/// Choose a random slot from `0..SLOT_SIZE` (excluding)
+fn random_slot() -> u16 {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    rng.gen_range(0..crate::cluster_topology::SLOT_SIZE)
 }
 
 #[cfg(test)]
@@ -1096,11 +1116,30 @@ mod tests {
             cmd("EVAL").arg(r#"redis.call("PING");"#).arg(0),
             cmd("EVALSHA").arg(r#"redis.call("PING");"#).arg(0),
         ] {
+            // EVAL / EVALSHA are expected to be routed to a RandomPrimary
             assert_eq!(
                 RoutingInfo::for_routable(cmd),
-                Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                Some(RoutingInfo::SingleNode(
+                    SingleNodeRoutingInfo::RandomPrimary
+                ))
             );
         }
+
+        // FCALL (with 0 keys) is expected to be routed to a random primary node
+        assert_eq!(
+            RoutingInfo::for_routable(cmd("FCALL").arg("foo").arg(0)),
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::RandomPrimary
+            ))
+        );
+
+        // While FCALL with N keys is expected to be routed to a specific node
+        assert_eq!(
+            RoutingInfo::for_routable(cmd("FCALL").arg("foo").arg(1).arg("mykey")),
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route::new(slot(b"mykey"), SlotAddr::Master))
+            ))
+        );
 
         for (cmd, expected) in [
             (

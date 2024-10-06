@@ -41,14 +41,14 @@ use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
-use rand::{seq::IteratorRandom, thread_rng, Rng};
+use rand::{seq::IteratorRandom, thread_rng};
 
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{
-    MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,
+    MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo,
 };
 use crate::cluster_slotmap::SlotMap;
-use crate::cluster_topology::{parse_and_count_slots, SLOT_SIZE};
+use crate::cluster_topology::parse_and_count_slots;
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
@@ -459,12 +459,9 @@ where
         };
 
         match RoutingInfo::for_routable(cmd) {
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => {
-                let mut rng = thread_rng();
-                Ok(addr_for_slot(Route::new(
-                    rng.gen_range(0..SLOT_SIZE),
-                    SlotAddr::Master,
-                ))?)
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+            | Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::RandomPrimary)) => {
+                Ok(addr_for_slot(Route::new_random_primary())?)
             }
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
                 Ok(addr_for_slot(route)?)
@@ -729,6 +726,9 @@ where
                         SingleNodeRoutingInfo::Random => get_random_connection(&mut connections),
                         SingleNodeRoutingInfo::SpecificNode(route) => {
                             self.get_connection(&mut connections, route)?
+                        }
+                        SingleNodeRoutingInfo::RandomPrimary => {
+                            self.get_connection(&mut connections, &Route::new_random_primary())?
                         }
                         SingleNodeRoutingInfo::ByAddress { host, port } => {
                             let address = format!("{host}:{port}");
