@@ -613,13 +613,7 @@ impl RoutingInfo {
                     .and_then(|x| std::str::from_utf8(x).ok())
                     .and_then(|x| x.parse::<u64>().ok())?;
                 if key_count == 0 {
-                    if is_readonly_cmd(cmd) {
-                        Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
-                    } else {
-                        Some(RoutingInfo::SingleNode(
-                            SingleNodeRoutingInfo::RandomPrimary,
-                        ))
-                    }
+                    Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
                 } else {
                     r.arg_idx(3).map(|key| RoutingInfo::for_key(cmd, key))
                 }
@@ -1116,22 +1110,11 @@ mod tests {
             cmd("EVAL").arg(r#"redis.call("PING");"#).arg(0),
             cmd("EVALSHA").arg(r#"redis.call("PING");"#).arg(0),
         ] {
-            // EVAL / EVALSHA are expected to be routed to a RandomPrimary
             assert_eq!(
                 RoutingInfo::for_routable(cmd),
-                Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::RandomPrimary
-                ))
+                Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
             );
         }
-
-        // FCALL (with 0 keys) is expected to be routed to a random primary node
-        assert_eq!(
-            RoutingInfo::for_routable(cmd("FCALL").arg("foo").arg(0)),
-            Some(RoutingInfo::SingleNode(
-                SingleNodeRoutingInfo::RandomPrimary
-            ))
-        );
 
         // While FCALL with N keys is expected to be routed to a specific node
         assert_eq!(

@@ -1,5 +1,6 @@
 use super::{AsyncStream, RedisResult, RedisRuntime, SocketAddr};
 use async_trait::async_trait;
+#[allow(unused_imports)] // fixes "Duration" unused when built with non-default feature set
 use std::{
     future::Future,
     io,
