@@ -1,3 +1,4 @@
+use rand::Rng;
 use std::cmp::min;
 use std::collections::HashMap;
 
@@ -966,7 +967,6 @@ impl Route {
 
 /// Choose a random slot from `0..SLOT_SIZE` (excluding)
 fn random_slot() -> u16 {
-    use rand::Rng;
     let mut rng = rand::thread_rng();
     rng.gen_range(0..crate::cluster_topology::SLOT_SIZE)
 }
