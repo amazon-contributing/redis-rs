@@ -2514,8 +2514,8 @@ mod cluster_async {
                 match port {
                     6380 => panic!("Node should not be called"),
                     _ => match completed.fetch_add(1, Ordering::SeqCst) {
-                        0..=1 => Err(Err(RedisError::from(std::io::Error::new(
-                            std::io::ErrorKind::ConnectionReset,
+                        0..=1 => Err(Err(RedisError::from((
+                            ErrorKind::IoErrorRetrySafe,
                             "mock-io-error",
                         )))),
                         _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
@@ -2567,6 +2567,78 @@ mod cluster_async {
             },
         }
         assert_eq!(completed.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_async_cluster_non_retryable_io_error_should_not_retry() {
+        let name = "test_async_cluster_non_retryable_io_error_should_not_retry";
+        let requests = atomic::AtomicUsize::new(0);
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(3),
+            name,
+            move |cmd: &[u8], _port| {
+                respond_startup_two_nodes(name, cmd)?;
+                let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
+                match i {
+                    0 => Err(Err(RedisError::from((ErrorKind::IoError, "io-error")))),
+                    _ => {
+                        panic!("Expected not to be retried!")
+                    }
+                }
+            },
+        );
+        runtime
+            .block_on(async move {
+                let res = cmd("INCR")
+                    .arg("foo")
+                    .query_async::<_, Option<i32>>(&mut connection)
+                    .await;
+                assert!(res.is_err());
+                let err = res.unwrap_err();
+                assert!(err.is_io_error());
+                Ok::<_, RedisError>(())
+            })
+            .unwrap();
+    }
+    #[test]
+    fn test_async_cluster_retry_safe_io_error_should_be_retried() {
+        let name = "test_async_cluster_retry_safe_io_error_should_be_retried";
+        let requests = atomic::AtomicUsize::new(0);
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(3),
+            name,
+            move |cmd: &[u8], _port| {
+                respond_startup_two_nodes(name, cmd)?;
+                let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
+                match i {
+                    0 => Err(Err(RedisError::from((
+                        ErrorKind::IoErrorRetrySafe,
+                        "server didn't receive the request, safe to retry",
+                    )))),
+                    _ => Err(Ok(Value::Int(1))),
+                }
+            },
+        );
+        runtime
+            .block_on(async move {
+                let res = cmd("INCR")
+                    .arg("foo")
+                    .query_async::<_, i32>(&mut connection)
+                    .await;
+                assert!(res.is_ok());
+                let value = res.unwrap();
+                assert_eq!(value, 1);
+                Ok::<_, RedisError>(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -3151,10 +3223,17 @@ mod cluster_async {
             };
 
             // wait for new topology discovery
+            let max_requests = 5;
+            let mut i = 0;
+            let mut cmd = redis::cmd("INFO");
+            cmd.arg("SERVER");
             loop {
-                let mut cmd = redis::cmd("INFO");
-                cmd.arg("SERVER");
-                let res = publishing_con
+                if i == max_requests {
+                    panic!("Failed to recover and discover new topology");
+                }
+                i += 1;
+
+                if let Ok(res) = publishing_con
                     .route_command(
                         &cmd,
                         RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::new(
@@ -3162,21 +3241,21 @@ mod cluster_async {
                             SlotAddr::Master,
                         ))),
                     )
-                    .await;
-                assert!(res.is_ok());
-                let res = res.unwrap();
-                match res {
-                    Value::VerbatimString { format: _, text } => {
-                        if text.contains(format!("tcp_port:{}", last_server_port).as_str()) {
-                            // new topology rediscovered
-                            break;
+                    .await
+                {
+                    match res {
+                        Value::VerbatimString { format: _, text } => {
+                            if text.contains(format!("tcp_port:{}", last_server_port).as_str()) {
+                                // new topology rediscovered
+                                break;
+                            }
+                        }
+                        _ => {
+                            panic!("Wrong return type for INFO SERVER command: {:?}", res);
                         }
                     }
-                    _ => {
-                        panic!("Wrong return type for INFO SERVER command: {:?}", res);
-                    }
+                    sleep(futures_time::time::Duration::from_secs(1)).await;
                 }
-                sleep(futures_time::time::Duration::from_secs(1)).await;
             }
 
             // sleep for one one cycle of topology refresh
@@ -3215,7 +3294,7 @@ mod cluster_async {
 
             if use_sharded {
                 // validate SPUBLISH
-                let result = cmd("SPUBLISH")
+                let result = redis::cmd("SPUBLISH")
                     .arg("test_channel_?")
                     .arg("test_message")
                     .query_async(&mut publishing_con)
@@ -3714,9 +3793,26 @@ mod cluster_async {
                 false,
             );
 
-            let result = connection.req_packed_command(&cmd).await.unwrap();
-            assert_eq!(result, Value::SimpleString("PONG".to_string()));
-            Ok::<_, RedisError>(())
+            let max_requests = 5;
+            let mut i = 0;
+            let mut last_err = None;
+            loop {
+                if i == max_requests {
+                    break;
+                }
+                i += 1;
+                match connection.req_packed_command(&cmd).await {
+                    Ok(result) => {
+                        assert_eq!(result, Value::SimpleString("PONG".to_string()));
+                        return Ok::<_, RedisError>(());
+                    }
+                    Err(err) => {
+                        last_err = Some(err);
+                        let _ = sleep(futures_time::time::Duration::from_secs(1)).await;
+                    }
+                }
+            }
+            panic!("Failed to recover after all nodes went down. Last error: {last_err:?}");
         })
         .unwrap();
     }
@@ -3742,19 +3838,37 @@ mod cluster_async {
             );
 
             let cmd = cmd("PING");
-            // explicitly route to all primaries and request all succeeded
-            let result = connection
-                .route_command(
-                    &cmd,
-                    RoutingInfo::MultiNode((
-                        MultipleNodeRoutingInfo::AllMasters,
-                        Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
-                    )),
-                )
-                .await;
-            assert!(result.is_ok());
 
-            Ok::<_, RedisError>(())
+            let max_requests = 5;
+            let mut i = 0;
+            let mut last_err = None;
+            loop {
+                if i == max_requests {
+                    break;
+                }
+                i += 1;
+                // explicitly route to all primaries and request all succeeded
+                match connection
+                    .route_command(
+                        &cmd,
+                        RoutingInfo::MultiNode((
+                            MultipleNodeRoutingInfo::AllMasters,
+                            Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
+                        )),
+                    )
+                    .await
+                {
+                    Ok(result) => {
+                        assert_eq!(result, Value::SimpleString("PONG".to_string()));
+                        return Ok::<_, RedisError>(());
+                    }
+                    Err(err) => {
+                        last_err = Some(err);
+                        let _ = sleep(futures_time::time::Duration::from_secs(1)).await;
+                    }
+                }
+            }
+            panic!("Failed to recover after all nodes went down. Last error: {last_err:?}");
         })
         .unwrap();
     }
@@ -3825,7 +3939,10 @@ mod cluster_async {
                     if connect_attempt > 5 {
                         panic!("Too many pings!");
                     }
-                    Err(Err(broken_pipe_error()))
+                    Err(Err(RedisError::from((
+                        ErrorKind::IoErrorRetrySafe,
+                        "mock-io-error",
+                    ))))
                 } else {
                     respond_startup_two_nodes(name, cmd)?;
                     let past_get_attempts = get_attempts.fetch_add(1, Ordering::Relaxed);
@@ -3833,7 +3950,10 @@ mod cluster_async {
                     if past_get_attempts == 0 {
                         // Error once with io-error, ensure connection is reestablished w/out calling
                         // other node (i.e., not doing a full slot rebuild)
-                        Err(Err(broken_pipe_error()))
+                        Err(Err(RedisError::from((
+                            ErrorKind::IoErrorRetrySafe,
+                            "mock-io-error",
+                        ))))
                     } else {
                         Err(Ok(Value::BulkString(b"123".to_vec())))
                     }
@@ -3936,21 +4056,23 @@ mod cluster_async {
     }
 
     async fn kill_connection(killer_connection: &mut ClusterConnection, connection_to_kill: &str) {
+        let default_routing = RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(
+            Route::new(0, SlotAddr::Master),
+        ));
+        kill_connection_with_routing(killer_connection, connection_to_kill, default_routing).await;
+    }
+
+    async fn kill_connection_with_routing(
+        killer_connection: &mut ClusterConnection,
+        connection_to_kill: &str,
+        routing: RoutingInfo,
+    ) {
         let mut cmd = redis::cmd("CLIENT");
         cmd.arg("KILL");
         cmd.arg("ID");
         cmd.arg(connection_to_kill);
-        // Kill the management connection in the primary node that holds slot 0
-        assert!(killer_connection
-            .route_command(
-                &cmd,
-                RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::new(
-                    0,
-                    SlotAddr::Master,
-                )),),
-            )
-            .await
-            .is_ok());
+        // Kill the management connection for the routing node
+        assert!(killer_connection.route_command(&cmd, routing).await.is_ok());
     }
 
     #[test]
